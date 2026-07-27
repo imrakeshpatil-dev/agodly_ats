@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Candidate {
+  id              String          @id @default(cuid())
+  name            String
+  email           String?
+  phone           String?
+  recruiter       String?
+  stage           String          @default("Identified")
+  jobId           String?
+  currentRole     String?
+  skills          Json            @default("[]")
+  experienceYears Float?
+  profileSummary  String?
+  keywords        Json            @default("[]")
+  location        String?
+  education       String?
+  currentCompany  String?
+  resumeUrl       String?
+  resumeHash      String?
+  parsedData      Json?
+  parsingStatus   String          @default("PENDING")
+  source          String?
+  status          String          @default("ACTIVE")
+  deletedAt       DateTime?
+  duplicateOf     Json            @default("[]")
+  mergedInto      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  activities      Activity[]
+
+  @@index([status, createdAt])
+  @@index([email])
+  @@index([phone])
+  @@index([jobId])
+}
+
+model Job {
+  id              String    @id @default(cuid())
+  title           String
+  clientId        String?
+  description     String?
+  requiredSkills  Json      @default("[]")
+  preferredSkills Json      @default("[]")
+  minExperience   Float?
+  maxExperience   Float?
+  location        String?
+  workMode        String?
+  jobType         String?
+  openings        Int       @default(1)
+  currency        String    @default("INR")
+  minCtcLpa       Float?
+  maxCtcLpa       Float?
+  status          String    @default("DRAFT")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  client          Client?   @relation(fields: [clientId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([clientId])
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  contact   String?
+  email     String?
+  phone     String?
+  location  String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  jobs      Job[]
+
+  @@index([name])
+}
+
+model AtsUser {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String?
+  role         String   @default("EMPLOYEE")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model UploadBatch {
+  id          String   @id @default(cuid())
+  fileName    String
+  fileType    String
+  status      String
+  totalFiles  Int      @default(0)
+  addedCount  Int      @default(0)
+  failedCount Int      @default(0)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+
+model AiInteraction {
+  id             String   @id @default(cuid())
+  conversationId String?
+  prompt         String
+  toolCalls      Json?
+  response       Json?
+  feedback       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+model Activity {
+  id          String    @id @default(cuid())
+  candidateId String?
+  actor       String?
+  action      String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  candidate   Candidate? @relation(fields: [candidateId], references: [id])
+
+  @@index([candidateId])
+  @@index([createdAt])
+}
+
+model RuntimeState {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
