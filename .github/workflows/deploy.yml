@@ -1,0 +1,45 @@
+name: Deploy to Vultr (CloudPanel)
+
+# Deploys on every push to main. You can also trigger it manually from the
+# Actions tab (Run workflow). The job SSHes into the CloudPanel server as the
+# site user and pulls + rebuilds + restarts the app.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two production deploys at once.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script_stop: true
+          script: |
+            export NVM_DIR="$HOME/.nvm"
+            . "$NVM_DIR/nvm.sh"
+            cd ~/htdocs/admin.agodly.com
+            echo ">> Pulling latest main..."
+            git fetch origin main
+            git reset --hard origin/main
+            echo ">> Installing dependencies (rebuilds native better-sqlite3)..."
+            npm ci
+            echo ">> Building..."
+            npm run build
+            echo ">> Applying DB migrations..."
+            npm run prisma:migrate:deploy
+            echo ">> Restarting app..."
+            pm2 restart agodly-ats
+            pm2 save
+            echo ">> Waiting for readiness..."
+            sleep 3
+            curl -fsS http://127.0.0.1:3000/ready && echo "" && echo "Deploy OK"
