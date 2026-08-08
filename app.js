@@ -9276,7 +9276,7 @@ async function checkBackendHealth() {
       throw new Error(issueText);
     }
     ui.api.connected = true;
-    ui.api.message = "Backend and database connected";
+    ui.api.message = "Backend and database connected with valid session";
     ui.bootstrapError = "";
     ui.candidates.lastQueryKey = "";
     ui.candidates.inFlightQueryKey = "";
