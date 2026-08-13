@@ -1,4 +1,5 @@
 import { promises as fs } from "fs";
+import crypto from "node:crypto";
 import path from "path";
 
 import { env, getConfigIssues } from "../config/env";
@@ -103,11 +104,12 @@ export const getReadinessStatus = async (): Promise<ReadinessStatus> => {
 
 export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
   const readiness = await getReadinessStatus();
-  const [candidateDiag, jobDiag, clientDiag, activityDiag] = await Promise.all([
+  const [candidateDiag, jobDiag, clientDiag, activityDiag, lastBackupStatus] = await Promise.all([
     readTable(() => prisma.candidate.count()),
     readTable(() => prisma.job.count()),
     readTable(() => prisma.client.count()),
-    readTable(() => prisma.activity.count())
+    readTable(() => prisma.activity.count()),
+    getLastBackupStatus()
   ]);
 
   const latestCandidate = await safeLatest(() =>
@@ -157,15 +159,31 @@ export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
       latestRecordCreated: newestIso([latestCandidate?.createdAt, latestJob?.createdAt, latestClient?.createdAt]),
       latestSuccessfulWrite: latestRuntimeWrite?.updatedAt ? latestRuntimeWrite.updatedAt.toISOString() : null,
       latestFailedWrite: null,
-      lastBackupStatus: "not_configured",
+      lastBackupStatus,
       storageStatus: readiness.checks.database.durable ? "durable_database" : "non_durable_storage",
       applicationVersion: "1.0.0"
     }
   };
 };
 
+const getLastBackupStatus = async (): Promise<string> => {
+  try {
+    const rawStatus = await fs.readFile(resolveRuntimeDataPath("backup-status.json"), "utf8");
+    const backup = JSON.parse(rawStatus) as { status?: string; timestamp?: string; file?: string };
+    if (backup.status !== "successful" || !backup.timestamp) return "invalid_backup_status";
+    const backupTime = Date.parse(backup.timestamp);
+    if (!Number.isFinite(backupTime)) return "invalid_backup_timestamp";
+    const ageHours = Math.max(0, (Date.now() - backupTime) / (60 * 60 * 1000));
+    const freshness = ageHours <= 24 ? "healthy" : "stale";
+    return `${freshness} · ${backup.timestamp}${backup.file ? ` · ${backup.file}` : ""}`;
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException)?.code;
+    return errorCode === "ENOENT" ? "not_configured" : "backup_status_unreadable";
+  }
+};
+
 const checkRuntimeStorage = async (): Promise<ReadinessStatus["checks"]["runtimeStorage"]> => {
-  const storagePath = resolveRuntimeDataPath(".readiness-check");
+  const storagePath = resolveRuntimeDataPath(`.readiness-check-${process.pid}-${crypto.randomUUID()}`);
   try {
     await fs.mkdir(path.dirname(storagePath), { recursive: true });
     await fs.writeFile(storagePath, new Date().toISOString(), "utf8");

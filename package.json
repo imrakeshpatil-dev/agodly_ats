@@ -14,7 +14,9 @@
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate:dev": "prisma migrate dev",
-    "prisma:migrate:deploy": "prisma migrate deploy",
+    "db:ensure": "node scripts/ensure-sqlite-db.mjs",
+    "db:backup": "node scripts/backup-sqlite.mjs",
+    "prisma:migrate:deploy": "npm run db:ensure && prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "deploy:check": "npm run typecheck && npm run prisma:validate && npm run build"
   },
