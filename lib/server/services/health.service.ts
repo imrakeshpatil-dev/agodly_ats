@@ -5,6 +5,8 @@ import path from "path";
 import { env, getConfigIssues } from "../config/env";
 import { prisma } from "./prisma.service";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
+import { AIHealthResult } from "./ai/aiProvider";
+import { getAIProvider } from "./ai/aiProviderFactory";
 
 export interface HealthStatus {
   success: true;
@@ -60,6 +62,7 @@ export interface DiagnosticsStatus extends ReadinessStatus {
     lastBackupStatus: string;
     storageStatus: string;
     applicationVersion: string;
+    ai: AIHealthResult;
   };
 }
 
@@ -104,12 +107,13 @@ export const getReadinessStatus = async (): Promise<ReadinessStatus> => {
 
 export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
   const readiness = await getReadinessStatus();
-  const [candidateDiag, jobDiag, clientDiag, activityDiag, lastBackupStatus] = await Promise.all([
+  const [candidateDiag, jobDiag, clientDiag, activityDiag, lastBackupStatus, ai] = await Promise.all([
     readTable(() => prisma.candidate.count()),
     readTable(() => prisma.job.count()),
     readTable(() => prisma.client.count()),
     readTable(() => prisma.activity.count()),
-    getLastBackupStatus()
+    getLastBackupStatus(),
+    getAIProvider().healthCheck()
   ]);
 
   const latestCandidate = await safeLatest(() =>
@@ -161,7 +165,8 @@ export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
       latestFailedWrite: null,
       lastBackupStatus,
       storageStatus: readiness.checks.database.durable ? "durable_database" : "non_durable_storage",
-      applicationVersion: "1.0.0"
+      applicationVersion: "1.0.0",
+      ai
     }
   };
 };

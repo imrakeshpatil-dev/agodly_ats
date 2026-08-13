@@ -83,7 +83,6 @@ type RouteContext = { params?: Record<string, string> | Promise<Record<string, s
 // a single generic wrapper must accept all of them.
 export const handle =
   (controller: Controller, options: HandleOptions = {}) =>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async (request: Request, context: any = {}): Promise<Response> => {
     try {
       const req = await buildRequest(request, (context ?? {}) as RouteContext);

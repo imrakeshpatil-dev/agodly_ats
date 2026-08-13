@@ -1,9 +1,8 @@
-import OpenAI from "openai";
-
 import { env } from "../config/env";
 import { AppError } from "../middleware/error.middleware";
 import { candidateStoreService } from "./candidate-store.service";
 import { CandidateRecord } from "../types/candidate";
+import { getAIProvider } from "./ai/aiProviderFactory";
 
 export interface CandidateSearchFilters {
   skill?: string;
@@ -101,7 +100,6 @@ const MATCH_STOP_WORDS = new Set([
   "preferred"
 ]);
 
-const openAiClient = env.openAiApiKey ? new OpenAI({ apiKey: env.openAiApiKey }) : null;
 let prismaClient: PrismaClientLike | null = null;
 let prismaInitAttempted = false;
 
@@ -111,7 +109,6 @@ const getPrismaClient = (): PrismaClientLike | null => {
 
   try {
     // Use Prisma when available. Fallback to local JSON store otherwise.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const prismaPkg = require("@prisma/client") as { PrismaClient: new () => PrismaClientLike };
     prismaClient = new prismaPkg.PrismaClient();
   } catch {
@@ -122,6 +119,8 @@ const getPrismaClient = (): PrismaClientLike | null => {
 };
 
 const normalizeSkill = (value: string): string => String(value || "").trim().toLowerCase();
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
 const normalizeMatchText = (value: string): string =>
   String(value || "")
     .toLowerCase()
@@ -442,7 +441,7 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
   };
 };
 
-const rerankWithOpenAiForJobMatch = async (input: {
+const rerankWithConfiguredProviderForJobMatch = async (input: {
   jobDescription: string;
   requiredTerms: string[];
   mustHaveTerms: string[];
@@ -450,7 +449,6 @@ const rerankWithOpenAiForJobMatch = async (input: {
   ranked: Record<string, unknown>[];
   topK: number;
 }): Promise<Record<string, unknown>[] | null> => {
-  if (!openAiClient || !env.openAiApiKey) return null;
   if (!input.ranked.length) return [];
 
   const shortlist = input.ranked.slice(0, Math.min(input.ranked.length, 25)).map((candidate) => ({
@@ -469,10 +467,9 @@ const rerankWithOpenAiForJobMatch = async (input: {
   }));
 
   try {
-    const completion = await openAiClient.chat.completions.create({
-      model: env.openAiModel,
+    const provider = getAIProvider();
+    const parsed = await provider.generateStructuredData<{ scores: Array<Record<string, unknown>> }>({
       temperature: 0.1,
-      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
@@ -514,12 +511,16 @@ const rerankWithOpenAiForJobMatch = async (input: {
             }
           })
         }
-      ]
+      ],
+      validate: (payload) => {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Object required");
+        const scores = (payload as Record<string, unknown>).scores;
+        if (!Array.isArray(scores)) throw new Error("Scores array required");
+        return { scores: scores.filter(isObject) };
+      }
     });
 
-    const content = completion.choices[0]?.message?.content || "{}";
-    const parsed = JSON.parse(content) as { scores?: Array<Record<string, unknown>> };
-    const rows = Array.isArray(parsed.scores) ? parsed.scores : [];
+    const rows = parsed.scores;
     if (!rows.length) return null;
 
     const byId = new Map<string, Record<string, unknown>>();
@@ -687,7 +688,7 @@ export const matchCandidatesToJob = async (jobMatchInput: string | JobMatchInput
     )
     .slice(0, Math.max(topK, 25));
 
-  const llmRanked = await rerankWithOpenAiForJobMatch({
+  const llmRanked = await rerankWithConfiguredProviderForJobMatch({
     jobDescription: enhancedJobText,
     requiredTerms,
     mustHaveTerms,
@@ -696,12 +697,12 @@ export const matchCandidatesToJob = async (jobMatchInput: string | JobMatchInput
     topK
   });
   const ranked = (llmRanked ?? heuristicRanked).slice(0, topK);
-  const usedOpenAi = llmRanked !== null;
+  const usedAI = llmRanked !== null;
 
   return {
     explanation: ranked.length
-      ? usedOpenAi
-        ? `Ranked ${ranked.length} candidate(s) using OpenAI-assisted match scoring with ATS evidence.`
+      ? usedAI
+        ? `Ranked ${ranked.length} candidate(s) using ${getAIProvider().getProviderName()}-assisted match scoring with ATS evidence.`
         : `Ranked ${ranked.length} candidate(s) against the JD with term/skill/experience confidence scoring.`
       : "No suitable candidates found for the provided job description or keywords.",
     results: ranked
@@ -763,12 +764,9 @@ export const generateInterviewQuestions = async (skill: string): Promise<AIToolR
     throw new AppError("skill is required", 400);
   }
 
-  if (env.openAiApiKey && openAiClient) {
-    try {
-      const completion = await openAiClient.chat.completions.create({
-        model: env.openAiModel,
+  try {
+      const parsed = await getAIProvider().generateStructuredData<{ questions: string[] }>({
         temperature: 0.4,
-        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
@@ -778,20 +776,21 @@ export const generateInterviewQuestions = async (skill: string): Promise<AIToolR
             role: "user",
             content: `Generate 5 interview questions for skill: ${cleanSkill}. Return JSON: {"questions": ["..."]}`
           }
-        ]
+        ],
+        validate: (payload) => {
+          if (!isObject(payload) || !Array.isArray(payload.questions)) throw new Error("Questions array required");
+          return { questions: payload.questions.map((item) => String(item).trim()).filter(Boolean).slice(0, 5) };
+        }
       });
 
-      const content = completion.choices[0]?.message?.content || "{}";
-      const parsed = JSON.parse(content) as { questions?: string[] };
-      const questions = Array.isArray(parsed.questions) ? parsed.questions.map((item) => String(item).trim()).filter(Boolean).slice(0, 5) : [];
+      const questions = parsed.questions;
 
       return {
         explanation: `Generated interview questions for ${cleanSkill}.`,
         results: questions.map((question, index) => ({ index: index + 1, question }))
       };
-    } catch {
-      // Fallback template below
-    }
+  } catch {
+    // Deterministic fallback below.
   }
 
   const fallbackQuestions = [
@@ -812,12 +811,9 @@ export const draftRecruiterMessage = async (candidateName: string, role: string)
   const cleanName = String(candidateName || "").trim() || "Candidate";
   const cleanRole = String(role || "").trim() || "the role";
 
-  if (env.openAiApiKey && openAiClient) {
-    try {
-      const completion = await openAiClient.chat.completions.create({
-        model: env.openAiModel,
+  try {
+      const parsed = await getAIProvider().generateStructuredData<{ subject: string; message: string }>({
         temperature: 0.5,
-        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
@@ -827,11 +823,12 @@ export const draftRecruiterMessage = async (candidateName: string, role: string)
             role: "user",
             content: `Draft a recruiter outreach message for ${cleanName} about ${cleanRole}. Return JSON: {"subject":"...","message":"..."}`
           }
-        ]
+        ],
+        validate: (payload) => {
+          if (!isObject(payload)) throw new Error("Object required");
+          return { subject: String(payload.subject || "").trim(), message: String(payload.message || "").trim() };
+        }
       });
-
-      const content = completion.choices[0]?.message?.content || "{}";
-      const parsed = JSON.parse(content) as { subject?: string; message?: string };
 
       return {
         explanation: `Drafted recruiter message for ${cleanName}.`,
@@ -842,9 +839,8 @@ export const draftRecruiterMessage = async (candidateName: string, role: string)
           }
         ]
       };
-    } catch {
-      // Fallback template below
-    }
+  } catch {
+    // Deterministic fallback below.
   }
 
   return {

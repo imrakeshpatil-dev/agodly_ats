@@ -26,7 +26,7 @@ instrumentation.ts        Startup guard (fatal-config check) + revocation-list l
 
 ```bash
 npm install
-cp .env.example .env   # then set ADMIN_PASSWORD, AUTH_TOKEN_SECRET, OPENAI_API_KEY
+cp .env.example .env   # Ollama is the default; then set admin/auth secrets
 npm run dev
 ```
 
@@ -62,7 +62,8 @@ mounted volume.
    - `ADMIN_EMAIL=admin@agodly.com`
    - `ADMIN_PASSWORD=<strong_password>`
    - `AUTH_TOKEN_SECRET=<openssl rand -hex 32>`  ← **required; server won't start without it**
-   - `OPENAI_API_KEY=...` (optional; AI features degrade gracefully without it)
+   - `AI_PROVIDER=openai` and `OPENAI_API_KEY=...` for production OpenAI support
+   - See `docs/ai-local-ollama.md` and `docs/ai-production-provider.md` for other modes and fallbacks
 4. Deploy, then confirm readiness:
    ```bash
    curl https://<your-domain>/ready
