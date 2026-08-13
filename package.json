@@ -18,7 +18,7 @@
     "db:backup": "node scripts/backup-sqlite.mjs",
     "prisma:migrate:deploy": "npm run db:ensure && prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "deploy:check": "npm run typecheck && npm run prisma:validate && npm run build"
+    "deploy:check": "npm run prisma:generate && npm run typecheck && npm run prisma:validate && npm run build"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.8.0",
