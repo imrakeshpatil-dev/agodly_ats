@@ -3778,32 +3778,34 @@ function renderUsersSection() {
                   .map((user) => {
                     const isSelected = user.id === ui.users.selectedId;
                     const status = normalizeUserStatus(user.status);
+                    const phone = String(user.phone || "").trim();
+                    const environmentManaged = isEnvironmentManagedUser(user);
                     return `
                       <tr class="${isSelected ? "is-selected-row" : ""}">
                         <td>${escapeHtml(user.name)}</td>
-                        <td>${escapeHtml(user.email)}<br />${escapeHtml(user.phone)}</td>
+                        <td>${escapeHtml(user.email)}${phone ? `<br />${escapeHtml(phone)}` : ""}</td>
                         <td>${statusBadge(user.role)}</td>
                         <td>${escapeHtml(user.team || "Unassigned")}</td>
                         <td>${escapeHtml(user.manager || "-")}</td>
                         <td>${Number(user.monthlyTarget || 0) || "-"}</td>
                         <td>${formatCurrency(user.revenueTarget || 0)}</td>
                         <td>${statusBadge(status)}</td>
-                        <td>${user.passwordConfigured ? `Set<br /><span class="muted-small">${escapeHtml(formatShortDate(user.passwordSetAt || user.updatedAt || ""))}</span>` : "Not set"}</td>
+                        <td>${environmentManaged ? "Server managed" : user.passwordConfigured ? `Set<br /><span class="muted-small">${escapeHtml(formatShortDate(user.passwordSetAt || user.updatedAt || ""))}</span>` : "Not set"}</td>
                         <td>${escapeHtml(user.createdAt)}</td>
                         <td>
                           <div class="table-actions">
                             <button class="tool-btn" type="button" data-action="open-user-editor" data-user-id="${user.id}" ${
-                              !canManageUsers ? "disabled" : ""
+                              !canManageUsers || environmentManaged ? "disabled" : ""
                             }>
                               Manage
                             </button>
                             <button class="tool-btn" type="button" data-action="toggle-user-status" data-user-id="${user.id}" ${
-                              !canManageUsers || status === "Archived" ? "disabled" : ""
+                              !canManageUsers || environmentManaged || status === "Archived" ? "disabled" : ""
                             }>
                               ${status === "Active" ? "Deactivate" : "Activate"}
                             </button>
                             <button class="tool-btn danger" type="button" data-action="delete-user" data-user-id="${user.id}" ${
-                              status === "Archived" || !canManageUsers ? "disabled" : ""
+                              status === "Archived" || !canManageUsers || environmentManaged ? "disabled" : ""
                             }>
                               Archive
                             </button>
@@ -3884,7 +3886,7 @@ function renderUserManagementPanel(user) {
           </div>
           <div class="user-security-list">
             <p><strong>Email domain:</strong> ${isAgodlyCompanyEmail(user.email) ? "Valid @agodly.com" : "Needs @agodly.com"}</p>
-            <p><strong>Password:</strong> ${user.passwordConfigured ? "Password set" : "Password not set"}</p>
+            <p><strong>Password:</strong> ${isEnvironmentManagedUser(user) ? "Managed through server environment" : user.passwordConfigured ? "Password set" : "Password not set"}</p>
             <p><strong>Access status:</strong> ${escapeHtml(status)}</p>
             <p><strong>Founder protected:</strong> ${isFounderUser ? "Yes" : "No"}</p>
           </div>
@@ -5088,6 +5090,11 @@ function openCurrentUserPasswordPanel() {
     return;
   }
 
+  if (isEnvironmentManagedUser(currentUser)) {
+    alert("This administrator password is managed through the server environment. Update ADMIN_PASSWORD on the server and restart the app.");
+    return;
+  }
+
   if (!canCurrentUserManageUsers()) {
     openPasswordDialog(currentUser.id);
     return;
@@ -5129,6 +5136,10 @@ function openUserEditor(userId) {
 
   const user = findById(state.users, userId);
   if (!user) return;
+  if (isEnvironmentManagedUser(user)) {
+    alert("This administrator account is managed through the server environment and cannot be edited in the portal.");
+    return;
+  }
 
   ui.users.selectedId = user.id;
   ui.users.resetPassword = "";
@@ -5468,6 +5479,10 @@ function normalizeUserStatus(value) {
   if (status === "Inactive") return "Inactive";
   if (status === "Archived") return "Archived";
   return "Active";
+}
+
+function isEnvironmentManagedUser(user) {
+  return Boolean(user && String(user.id || "") === "usr-admin");
 }
 
 function normalizeMonthlyTarget(value, role) {

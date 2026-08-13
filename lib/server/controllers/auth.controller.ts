@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 
+import { env } from "../config/env";
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 import { authService, isFounderRole } from "../services/auth.service";
@@ -44,6 +45,10 @@ export const setPassword = async (req: Request, res: Response): Promise<void> =>
   const newPassword = String(req.body?.newPassword || "");
   const targetUserId = String(req.body?.userId || "").trim();
   const targetEmail = String(req.body?.email || "").trim().toLowerCase();
+
+  if (targetUserId === "usr-admin" || targetEmail === String(env.adminEmail || "").trim().toLowerCase()) {
+    throw new AppError("This administrator password is managed through server environment configuration", 409);
+  }
 
   if (newPassword.length < 8) {
     throw new AppError("Password must be at least 8 characters", 400);

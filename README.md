@@ -33,8 +33,8 @@ npm run dev
 Open `http://localhost:3000` (or `/app`).
 
 > Storage is an embedded **SQLite** file — no external database or Docker needed.
-> `npm run dev` / `npm run start` automatically run `prisma generate` and
-> `prisma migrate deploy` (creating/upgrading the database file) before booting.
+> `npm run dev` / `npm run start` automatically create the SQLite file when
+> needed, run `prisma generate`, and apply migrations before booting.
 
 ## Production Deploy
 
@@ -98,6 +98,9 @@ file (via the `better-sqlite3` driver adapter). Versioned migrations live in
   `database.durable` and `runtimeStorage.durable` so you can confirm the path.
 - Backups: the store is a single file — back it up by copying the `.sqlite` file
   (or snapshotting the volume) on a schedule.
+- Safe online backup: `npm run db:backup`. Automated production deploys create
+  and integrity-check a backup before applying migrations, retaining the latest
+  10 backups by default (`AGODLY_BACKUP_RETENTION` can override this).
 - Schema changes: edit `schema.prisma`, then
   `npm run prisma:migrate:dev -- --name <change>` and commit the generated folder.
 

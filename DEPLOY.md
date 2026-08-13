@@ -93,10 +93,17 @@ Backups: the whole database is one file — copy it on a schedule:
 
 ## Automated deploys (GitHub Actions)
 
-Pushing to `main` triggers `.github/workflows/deploy.yml`, which SSHes into the
-server as the site user and runs: `git reset --hard origin/main` → `npm ci` →
-`npm run build` → `prisma migrate deploy` → `pm2 restart`. `.env` and the database
-are untouched (gitignored / stored outside the repo).
+Pushing to `main` triggers `.github/workflows/deploy.yml`. GitHub first validates
+types, the Prisma schema, and a production build. It then SSHes into the server
+and runs: `git reset --hard origin/main` → `npm ci` → `npm run build` → verified
+SQLite backup → `prisma migrate deploy` → `pm2 restart` → readiness check. `.env`
+and the live database are outside the repo and are never replaced by Git.
+
+Each deployment keeps an integrity-checked backup under
+`/home/rakeshpatil1/data/agodly-ats/backups` before migrations run. The latest
+10 are retained by default. These same-disk backups protect against a bad schema
+or application release; configure an off-server backup separately for full disk
+or VPS failure recovery.
 
 ### One-time setup
 
