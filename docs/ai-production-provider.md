@@ -9,7 +9,7 @@ Store the key only in the production host's encrypted server environment:
 ```dotenv
 AI_PROVIDER=openai
 OPENAI_API_KEY=replace-in-host-secret-manager
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4.1-mini
 AI_REQUEST_TIMEOUT_MS=30000
 AI_MAX_RETRIES=1
 AI_MAX_OUTPUT_TOKENS=2000

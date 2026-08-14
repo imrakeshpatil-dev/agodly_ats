@@ -19,7 +19,7 @@ The server-side `/home/rakeshpatil1/htdocs/admin.agodly.com/.env` must contain:
 ```dotenv
 AI_PROVIDER=openai
 OPENAI_API_KEY=<production project key>
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4.1-mini
 AI_REQUEST_TIMEOUT_MS=30000
 AI_MAX_RETRIES=1
 AI_MAX_OUTPUT_TOKENS=2000

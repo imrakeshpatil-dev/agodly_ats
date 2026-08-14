@@ -60,7 +60,10 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
     if (!this.config.apiKey) return this.healthResult("not_configured", "not_configured");
     const previousLastSuccess = this.lastSuccessfulRequestAt;
     try {
-      await this.requestJson(`${this.config.baseUrl.replace(/\/$/, "")}/models`, {
+      const healthPath = this.config.provider === "openai"
+        ? `/models/${encodeURIComponent(this.config.model)}`
+        : "/models";
+      await this.requestJson(`${this.config.baseUrl.replace(/\/$/, "")}${healthPath}`, {
         method: "GET",
         headers: { Authorization: `Bearer ${this.config.apiKey}` }
       });

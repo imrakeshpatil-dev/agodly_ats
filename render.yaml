@@ -28,7 +28,7 @@ services:
       - key: AI_PROVIDER
         value: openai
       - key: OPENAI_MODEL
-        value: gpt-4o-mini
+        value: gpt-4.1-mini
       - key: AI_REQUEST_TIMEOUT_MS
         value: 30000
       - key: AI_MAX_RETRIES

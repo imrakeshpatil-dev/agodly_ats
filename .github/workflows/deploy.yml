@@ -11,12 +11,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Read-only audit or approved deployment
+        description: Read-only audit, verified backup, or approved deployment
         required: true
         default: audit
         type: choice
         options:
           - audit
+          - backup
           - deploy
 
 concurrency:
@@ -84,7 +85,7 @@ jobs:
             curl -fsS http://127.0.0.1:3000/ready
 
   backup:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'backup' || inputs.operation == 'deploy'))
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -113,6 +114,7 @@ jobs:
             git branch --show-current > "$release_dir/git-branch.txt"
             cp .env "$release_dir/application.env"
             chmod 600 "$release_dir/application.env"
+            chmod 600 .env
             npm run db:backup -- --require-existing
             test -d "$AGODLY_DATA_DIR/resumes"
             tar -czf "$release_dir/resumes.tar.gz" -C "$AGODLY_DATA_DIR" resumes
@@ -136,10 +138,13 @@ jobs:
     steps:
       - name: Deploy over SSH using the existing PM2 process
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_OPENAI_API_KEY: ${{ secrets.DEPLOY_OPENAI_API_KEY }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
+          envs: DEPLOY_OPENAI_API_KEY
           script_stop: true
           script: |
             set -e
@@ -147,6 +152,9 @@ jobs:
             . "$NVM_DIR/nvm.sh"
             cd ~/htdocs/admin.agodly.com
             chmod 600 .env
+            test -n "${DEPLOY_OPENAI_API_KEY:-}"
+            node -e 'const fs=require("fs"),p=".env",t=p+".release.tmp",u={AI_PROVIDER:"openai",OPENAI_API_KEY:process.env.DEPLOY_OPENAI_API_KEY,OPENAI_MODEL:"gpt-4.1-mini",AI_REQUEST_TIMEOUT_MS:"30000",AI_MAX_RETRIES:"1",AI_MAX_OUTPUT_TOKENS:"2000",AI_RESUME_MAX_CHARS:"18000"},keys=new Set(Object.keys(u)),lines=fs.readFileSync(p,"utf8").split(/\r?\n/).filter(line=>!keys.has(line.split("=",1)[0]));fs.writeFileSync(t,lines.filter(Boolean).concat(Object.entries(u).map(([k,v])=>k+"="+v),"").join("\n"),{mode:0o600});fs.renameSync(t,p)'
+            unset DEPLOY_OPENAI_API_KEY
             echo ">> Pulling approved main commit..."
             git fetch origin main
             git reset --hard origin/main

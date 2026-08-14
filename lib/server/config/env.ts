@@ -37,7 +37,7 @@ export const env = {
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
   ollamaModel: process.env.OLLAMA_MODEL ?? "gemma3:1b",
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openAiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+  openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
   openRouterModel: process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini",
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",

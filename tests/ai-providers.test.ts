@@ -67,6 +67,22 @@ test("Ollama unavailable is categorized and resume parsing falls back", async ()
 });
 
 for (const providerName of ["openai", "openrouter"] as const) {
+  test(`${providerName} health checks the configured model safely`, async () => {
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return jsonResponse({ id: "test-model" });
+    };
+    const provider = createAIProvider(config(providerName));
+    assert.equal((await provider.healthCheck()).status, "available");
+    assert.equal(
+      requestedUrl,
+      providerName === "openai"
+        ? "https://provider.test/v1/models/test-model"
+        : "https://provider.test/v1/models"
+    );
+  });
+
   test(`${providerName} success returns structured data`, async () => {
     globalThis.fetch = async () => jsonResponse({
       choices: [{ message: { content: '{"value":"ok"}' } }],
