@@ -3,6 +3,7 @@ import path from "path";
 
 import { CandidateInput, BulkUploadResponse, CandidateRecord, UploadFileResult } from "../types/candidate";
 import { attributeCandidateToUploader, BulkUploadActor } from "../utils/bulk-upload-attribution";
+import { buildBlockedDuplicateReason } from "../utils/candidate-duplicates";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 import { candidateStoreService } from "./candidate-store.service";
 import { cvParserService } from "./cv-parser.service";
@@ -22,16 +23,14 @@ export class BulkUploadService {
 
     const results: UploadFileResult[] = [];
     const addedCandidates: CandidateRecord[] = [];
-    const duplicates: BulkUploadResponse["duplicates"] = [];
+    const blockedDuplicates: BulkUploadResponse["blockedDuplicates"] = [];
 
     for (const file of files) {
       const extension = path.extname(file.originalname).replace(".", "").toLowerCase();
+      let originalResume: StoredResume | null = null;
 
       try {
         let parsedCandidates: CandidateInput[] = [];
-        const originalResume = ["pdf", "doc", "docx"].includes(extension)
-          ? await this.storeOriginalResume(file, extension)
-          : null;
 
         if (extension === "csv") {
           parsedCandidates = await cvParserService.parseCsv(file.buffer, file.originalname);
@@ -44,6 +43,7 @@ export class BulkUploadService {
         let addedForFile = 0;
         let duplicateForFile = 0;
         const parserModes = new Set<string>();
+        const blockedReasons = new Set<string>();
 
         for (const parsedCandidate of parsedCandidates) {
           const parserMode = String(parsedCandidate.parsedData?.parser || "").trim().toUpperCase();
@@ -53,47 +53,55 @@ export class BulkUploadService {
 
           const candidateInput = attributeCandidateToUploader({
             ...parsedCandidate,
-            resumeUrl: originalResume?.resumeUrl || parsedCandidate.resumeUrl || "",
+            resumeUrl: parsedCandidate.resumeUrl || "",
             source: parsedCandidate.source?.trim() || buildSourceLabel(extension, file.originalname),
             parsingStatus: parsedCandidate.parsingStatus ?? "COMPLETED",
             parsedData: {
               ...(parsedCandidate.parsedData || {}),
-              originalResume: originalResume
-                ? {
-                    fileName: file.originalname,
-                    fileType: extension.toUpperCase(),
-                    storedFileName: originalResume.storedFileName,
-                    resumeUrl: originalResume.resumeUrl,
-                    mimeType: file.mimetype || "",
-                    sizeBytes: file.size || file.buffer.length
-                  }
-                : undefined,
               uploadFileName: file.originalname,
               uploadFileType: extension.toUpperCase()
             }
           }, actor);
 
-          const matches = await candidateStoreService.findPotentialMatches(candidateInput);
+          const preflightMatches = await candidateStoreService.findPotentialMatches(candidateInput);
 
-          if (matches.length) {
-            const pendingCandidate = await candidateStoreService.addDuplicateCandidate(
-              candidateInput,
-              matches.map((item) => item.id)
-            );
-
-            duplicates.push({
-              duplicateCandidate: pendingCandidate,
-              matchedCandidates: matches,
-              reason: buildDuplicateReason(candidateInput, matches)
-            });
-
+          if (preflightMatches.length) {
+            recordBlockedDuplicate(candidateInput, preflightMatches, blockedDuplicates, blockedReasons);
             duplicateForFile += 1;
             summary.duplicateCandidates += 1;
             continue;
           }
 
-          const added = await candidateStoreService.addActiveCandidate(candidateInput);
-          addedCandidates.push(added);
+          if (["pdf", "doc", "docx"].includes(extension) && !originalResume) {
+            originalResume = await this.storeOriginalResume(file, extension);
+            candidateInput.resumeUrl = originalResume.resumeUrl;
+            candidateInput.parsedData = {
+              ...(candidateInput.parsedData || {}),
+              originalResume: {
+                fileName: file.originalname,
+                fileType: extension.toUpperCase(),
+                storedFileName: originalResume.storedFileName,
+                resumeUrl: originalResume.resumeUrl,
+                mimeType: file.mimetype || "",
+                sizeBytes: file.size || file.buffer.length
+              }
+            };
+          }
+
+          const uniqueResult = await candidateStoreService.addActiveCandidateIfUnique(candidateInput);
+
+          if (!uniqueResult.candidate) {
+            if (originalResume && addedForFile === 0) {
+              await this.removeStoredResume(originalResume);
+              originalResume = null;
+            }
+            recordBlockedDuplicate(candidateInput, uniqueResult.matches, blockedDuplicates, blockedReasons);
+            duplicateForFile += 1;
+            summary.duplicateCandidates += 1;
+            continue;
+          }
+
+          addedCandidates.push(uniqueResult.candidate);
           addedForFile += 1;
           summary.addedCandidates += 1;
         }
@@ -103,14 +111,18 @@ export class BulkUploadService {
         results.push({
           fileName: file.originalname,
           kind: extension.toUpperCase(),
-          status: "Completed",
+          status: addedForFile === 0 && duplicateForFile > 0 ? "Blocked" : "Completed",
           added: addedForFile,
+          blocked: duplicateForFile,
           message:
             extension === "csv"
-              ? `Parsed ${parsedCandidates.length} row(s), ${duplicateForFile} duplicate(s)`
-              : buildResumeParseMessage(parserModes, duplicateForFile)
+              ? buildCsvParseMessage(parsedCandidates.length, addedForFile, duplicateForFile)
+              : buildResumeParseMessage(parserModes, duplicateForFile, blockedReasons)
         });
       } catch (error) {
+        if (originalResume) {
+          await this.removeStoredResume(originalResume).catch(() => undefined);
+        }
         summary.failed += 1;
         summary.pending -= 1;
         results.push({
@@ -118,6 +130,7 @@ export class BulkUploadService {
           kind: extension.toUpperCase() || "Unknown",
           status: "Failed",
           added: 0,
+          blocked: 0,
           message: error instanceof Error ? error.message : "Could not parse file"
         });
       }
@@ -127,7 +140,8 @@ export class BulkUploadService {
       summary,
       results,
       addedCandidates,
-      duplicates
+      blockedDuplicates,
+      duplicates: []
     };
   }
 
@@ -146,7 +160,7 @@ export class BulkUploadService {
   private async storeOriginalResume(
     file: Express.Multer.File,
     extension: string
-  ): Promise<{ resumeUrl: string; storedFileName: string }> {
+  ): Promise<StoredResume> {
     await fs.mkdir(this.resumeDir, { recursive: true });
     const storedFileName = `${Date.now()}-${sanitizeFileName(file.originalname || `resume.${extension}`)}`;
     const storedPath = path.resolve(this.resumeDir, storedFileName);
@@ -154,22 +168,37 @@ export class BulkUploadService {
 
     return {
       storedFileName,
-      resumeUrl: toPosixPath(path.relative(process.cwd(), storedPath))
+      resumeUrl: toPosixPath(path.relative(process.cwd(), storedPath)),
+      storedPath
     };
+  }
+
+  private async removeStoredResume(resume: StoredResume): Promise<void> {
+    await fs.rm(resume.storedPath, { force: true });
   }
 }
 
-const buildDuplicateReason = (incoming: CandidateInput, matches: CandidateRecord[]): string => {
-  const email = incoming.email.trim().toLowerCase();
-  const phone = incoming.phone.replace(/\D/g, "");
+interface StoredResume {
+  resumeUrl: string;
+  storedFileName: string;
+  storedPath: string;
+}
 
-  const hasEmailMatch = email ? matches.some((item) => item.email.trim().toLowerCase() === email) : false;
-  const hasPhoneMatch = phone ? matches.some((item) => item.phone.replace(/\D/g, "") === phone) : false;
-
-  if (hasEmailMatch && hasPhoneMatch) return "Matched by email and phone";
-  if (hasEmailMatch) return "Matched by email";
-  if (hasPhoneMatch) return "Matched by phone";
-  return "Potential duplicate";
+const recordBlockedDuplicate = (
+  candidate: CandidateInput,
+  matches: CandidateRecord[],
+  blockedDuplicates: BulkUploadResponse["blockedDuplicates"],
+  blockedReasons: Set<string>
+): void => {
+  const reason = buildBlockedDuplicateReason(candidate, matches);
+  blockedReasons.add(reason);
+  blockedDuplicates.push({
+    name: candidate.name,
+    email: candidate.email,
+    phone: candidate.phone,
+    reason,
+    matchedCandidateIds: [...new Set(matches.map((item) => item.id))]
+  });
 };
 
 const buildSourceLabel = (extension: string, fileName: string): string => {
@@ -179,14 +208,24 @@ const buildSourceLabel = (extension: string, fileName: string): string => {
   return `Resume Upload (${fileName})`;
 };
 
-const buildResumeParseMessage = (parserModes: Set<string>, duplicateForFile: number): string => {
+const buildCsvParseMessage = (parsed: number, added: number, blocked: number): string => {
+  if (blocked > 0) {
+    return `Parsed ${parsed} row(s): ${added} added, ${blocked} blocked because the email or phone already exists`;
+  }
+  return `Parsed ${parsed} row(s): ${added} added`;
+};
+
+const buildResumeParseMessage = (
+  parserModes: Set<string>,
+  duplicateForFile: number,
+  blockedReasons: Set<string>
+): string => {
   const hasAiParser = parserModes.has("AI");
   const hasHeuristicParser = parserModes.has("HEURISTIC");
   const hasFilenameFallback = parserModes.has("FILENAME_FALLBACK");
 
   if (duplicateForFile > 0) {
-    if (hasAiParser) return "AI parsed resume with duplicate matches";
-    return "Processed with duplicate matches";
+    return [...blockedReasons][0] || "Blocked: candidate already exists in the database";
   }
 
   if (hasAiParser) return "AI parsed resume successfully";

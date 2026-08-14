@@ -4,8 +4,9 @@ import path from "path";
 import { AppError } from "../middleware/error.middleware";
 import { createId } from "../utils/id";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
-import { normalizeEmail, normalizePhone, uniqueStrings } from "../utils/text";
+import { normalizeEmail, uniqueStrings } from "../utils/text";
 import { CandidateInput, CandidateProfileUpdate, CandidateRecord, DuplicateGroup } from "../types/candidate";
+import { matchCandidateIdentity, summarizeCandidateIdentityMatches } from "../utils/candidate-duplicates";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { runtimeStateService } from "./runtime-state.service";
 
@@ -34,11 +35,17 @@ export interface CandidateListResult {
   };
 }
 
+export interface UniqueCandidateAddResult {
+  candidate: CandidateRecord | null;
+  matches: CandidateRecord[];
+}
+
 class CandidateStoreService {
   private readonly stateKey = "candidate-store";
   private readonly filePath: string;
   private records: CandidateRecord[] = [];
   private initialized = false;
+  private uniqueAddQueue: Promise<void> = Promise.resolve();
 
   constructor() {
     this.filePath = resolveRuntimeDataPath("candidate-store.json");
@@ -104,22 +111,30 @@ class CandidateStoreService {
   async findPotentialMatches(input: CandidateInput): Promise<CandidateRecord[]> {
     await this.reloadFromStore();
 
-    const email = normalizeEmail(input.email);
-    const phone = normalizePhone(input.phone);
-
-    return this.records
-      .filter((item) => item.status === "ACTIVE" || item.status === "DUPLICATE_PENDING")
-      .filter((item) => {
-        const emailMatch = email ? normalizeEmail(item.email) === email : false;
-        const phoneMatch = phone ? normalizePhone(item.phone) === phone : false;
-        return emailMatch || phoneMatch;
-      })
-      .map((item) => ({ ...item }));
+    return this.findPotentialMatchesInMemory(input);
   }
 
   async addActiveCandidate(input: CandidateInput): Promise<CandidateRecord> {
     await this.reloadFromStore();
 
+    return this.appendActiveCandidate(input);
+  }
+
+  async addActiveCandidateIfUnique(input: CandidateInput): Promise<UniqueCandidateAddResult> {
+    return this.runUniqueAdd(async () => {
+      await this.reloadFromStore();
+      const matches = this.findPotentialMatchesInMemory(input);
+
+      if (matches.length) {
+        return { candidate: null, matches };
+      }
+
+      const candidate = await this.appendActiveCandidate(input);
+      return { candidate, matches: [] };
+    });
+  }
+
+  private async appendActiveCandidate(input: CandidateInput): Promise<CandidateRecord> {
     const normalized = normalizeCandidateInput(input);
     const now = new Date().toISOString();
     const record: CandidateRecord = {
@@ -153,6 +168,31 @@ class CandidateStoreService {
     this.records.push(record);
     await this.persist();
     return { ...record };
+  }
+
+  private findPotentialMatchesInMemory(input: CandidateInput): CandidateRecord[] {
+    return this.records
+      .filter((item) => item.status === "ACTIVE" || item.status === "DUPLICATE_PENDING")
+      .filter((item) => {
+        const matched = matchCandidateIdentity(input, item);
+        return matched.email || matched.phone;
+      })
+      .map((item) => ({ ...item }));
+  }
+
+  private async runUniqueAdd<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.uniqueAddQueue;
+    let release = (): void => undefined;
+    this.uniqueAddQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async addDuplicateCandidate(input: CandidateInput, matchIds: string[]): Promise<CandidateRecord> {
@@ -470,26 +510,17 @@ class CandidateStoreService {
   }
 
   private buildDuplicateReason(duplicate: CandidateRecord, matches: CandidateRecord[]): string {
-    const duplicateEmail = normalizeEmail(duplicate.email);
-    const duplicatePhone = normalizePhone(duplicate.phone);
+    const matched = summarizeCandidateIdentityMatches(duplicate, matches);
 
-    const hasEmailMatch = duplicateEmail
-      ? matches.some((item) => normalizeEmail(item.email) === duplicateEmail)
-      : false;
-
-    const hasPhoneMatch = duplicatePhone
-      ? matches.some((item) => normalizePhone(item.phone) === duplicatePhone)
-      : false;
-
-    if (hasEmailMatch && hasPhoneMatch) {
+    if (matched.email && matched.phone) {
       return "Matched by email and phone";
     }
 
-    if (hasEmailMatch) {
+    if (matched.email) {
       return "Matched by email";
     }
 
-    if (hasPhoneMatch) {
+    if (matched.phone) {
       return "Matched by phone";
     }
 
