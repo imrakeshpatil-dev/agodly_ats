@@ -2,13 +2,16 @@ import { Request, Response } from "express";
 import { promises as fs } from "fs";
 import path from "path";
 
-import { env } from "../config/env";
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 import { AuthUser, isFounderRole } from "../services/auth.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
-import { parseResumeWithAI, ResumeStructuredData } from "../services/resumeAIParser";
+import {
+  classifyResumeAIError,
+  parseResumeWithAIResult,
+  ResumeAIParseResult
+} from "../services/resumeAIParser";
 import { extractTextFromDOCX, extractTextFromPDF } from "../services/resumeTextExtractor";
 import { CandidateInput, CandidateProfileUpdate, CandidateRecord } from "../types/candidate";
 import { uniqueStrings } from "../utils/text";
@@ -344,10 +347,6 @@ export const reparseCandidateWithAI = async (req: Request, res: Response): Promi
     throw new AppError("Candidate id is required", 400);
   }
 
-  if (!env.openAiApiKey) {
-    throw new AppError("OPENAI_API_KEY is not configured", 400);
-  }
-
   const candidate = await candidateStoreService.getCandidateById(candidateId);
   if (!candidate) {
     throw new AppError("Candidate not found", 404);
@@ -362,8 +361,8 @@ export const reparseCandidateWithAI = async (req: Request, res: Response): Promi
     );
   }
 
-  const parsed = await parseResumeWithAI(resumeText);
-  const patch = buildPatchFromAiResult(parsed, candidate, resumeText);
+  const result = await parseResumeWithAIResult(resumeText);
+  const patch = buildPatchFromAiResult(result, candidate, resumeText);
   const updated = await candidateStoreService.updateCandidateProfile(candidateId, patch);
 
   res.status(200).json({
@@ -373,10 +372,6 @@ export const reparseCandidateWithAI = async (req: Request, res: Response): Promi
 };
 
 export const reparseCandidatesBatchWithAI = async (req: Request, res: Response): Promise<void> => {
-  if (!env.openAiApiKey) {
-    throw new AppError("OPENAI_API_KEY is not configured", 400);
-  }
-
   const candidateIds = Array.isArray(req.body?.candidateIds)
     ? req.body.candidateIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
     : [];
@@ -410,8 +405,8 @@ export const reparseCandidatesBatchWithAI = async (req: Request, res: Response):
         continue;
       }
 
-      const parsed = await parseResumeWithAI(resumeText);
-      const patch = buildPatchFromAiResult(parsed, candidate, resumeText);
+      const result = await parseResumeWithAIResult(resumeText);
+      const patch = buildPatchFromAiResult(result, candidate, resumeText);
       const updated = await candidateStoreService.updateCandidateProfile(candidate.id, patch);
       successCount += 1;
       results.push({
@@ -426,7 +421,7 @@ export const reparseCandidatesBatchWithAI = async (req: Request, res: Response):
         candidateId: candidate.id,
         name: candidate.name,
         status: "failed",
-        reason: error instanceof Error ? error.message : "Unknown reparse error"
+        reason: classifyResumeAIError(error)
       });
     }
   }
@@ -626,10 +621,11 @@ const getFirstNonEmptyString = (values: unknown[]): string => {
 };
 
 const buildPatchFromAiResult = (
-  parsed: ResumeStructuredData,
+  result: ResumeAIParseResult,
   existing: CandidateRecord,
   resumeText: string
 ): CandidateProfileUpdate => {
+  const parsed = result.data;
   const normalized = normalizeResumeExtraction(parsed, resumeText);
   const skills = uniqueStrings(normalized.skills || []);
   const currentRole = String(normalized.currentRole || existing.currentRole || "").trim();
@@ -666,11 +662,10 @@ const buildPatchFromAiResult = (
     parsedData: {
       ...(existing.parsedData || {}),
       parser: "AI_REPARSE",
-      model: env.openAiModel,
+      ...result.metadata,
       reparsedAt: new Date().toISOString(),
       resumeText: resumeText.slice(0, 40000),
-      ...normalized,
-      rawAiExtraction: parsed
+      ...normalized
     }
   };
 };

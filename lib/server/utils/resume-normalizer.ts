@@ -134,12 +134,6 @@ const titleCase = (value: string): string =>
     .join(" ")
     .trim();
 
-const splitMulti = (value: string): string[] =>
-  String(value || "")
-    .split(/[|,;/]+/g)
-    .map((item) => normalizeInline(item))
-    .filter(Boolean);
-
 const clampExperience = (value: number | null): number | null => {
   if (value == null || !Number.isFinite(value)) return null;
   const bounded = Math.max(0, Math.min(50, value));
@@ -372,4 +366,3 @@ export const normalizeResumeExtraction = (
     }
   };
 };
-

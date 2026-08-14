@@ -9,6 +9,11 @@ const toNumber = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toBoundedInteger = (value: string | undefined, fallback: number, min: number, max: number): number => {
+  const parsed = Math.trunc(toNumber(value, fallback));
+  return Math.min(Math.max(parsed, min), max);
+};
+
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProduction = nodeEnv === "production";
 // SQLite file store. The database is durable as long as the resolved path lives
@@ -24,8 +29,18 @@ export const env = {
   port: toNumber(process.env.PORT, 4000),
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
   databaseUrl: process.env.DATABASE_URL ?? defaultDatabaseUrl,
+  aiProvider: (process.env.AI_PROVIDER ?? "ollama").trim().toLowerCase(),
+  aiRequestTimeoutMs: toBoundedInteger(process.env.AI_REQUEST_TIMEOUT_MS, 30_000, 1_000, 120_000),
+  aiMaxRetries: toBoundedInteger(process.env.AI_MAX_RETRIES, 1, 0, 1),
+  aiMaxOutputTokens: toBoundedInteger(process.env.AI_MAX_OUTPUT_TOKENS, 2_000, 128, 8_000),
+  aiResumeMaxChars: toBoundedInteger(process.env.AI_RESUME_MAX_CHARS, 18_000, 2_000, 40_000),
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
+  ollamaModel: process.env.OLLAMA_MODEL ?? "gemma3:1b",
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openAiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+  openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+  openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  openRouterModel: process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini",
+  openRouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   adminEmail: process.env.ADMIN_EMAIL ?? "admin@agodly.com",
   adminPassword: process.env.ADMIN_PASSWORD ?? "",
   authTokenSecret: process.env.AUTH_TOKEN_SECRET ?? "",
@@ -78,8 +93,16 @@ export const getConfigIssues = (): string[] => {
     issues.push("DATABASE_URL must be a SQLite file: path or a PostgreSQL connection string.");
   }
 
-  if (!env.openAiApiKey) {
-    issues.push("OPENAI_API_KEY is not configured; AI parsing and LLM match scoring will use fallback behavior.");
+  if (!["ollama", "openai", "openrouter", "disabled"].includes(env.aiProvider)) {
+    issues.push(`AI_PROVIDER=${env.aiProvider} is invalid; choose ollama, openai, openrouter, or disabled.`);
+  }
+
+  if (env.aiProvider === "openai" && !env.openAiApiKey) {
+    issues.push("AI_PROVIDER=openai requires OPENAI_API_KEY; AI features will use deterministic fallback behavior.");
+  }
+
+  if (env.aiProvider === "openrouter" && !env.openRouterApiKey) {
+    issues.push("AI_PROVIDER=openrouter requires OPENROUTER_API_KEY; AI features will use deterministic fallback behavior.");
   }
 
   return issues;

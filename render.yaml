@@ -25,6 +25,16 @@ services:
         value: admin@agodly.com
       # Set these as secret env vars in the Render dashboard (do not commit real values):
       #   ADMIN_PASSWORD, AUTH_TOKEN_SECRET, OPENAI_API_KEY
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: AI_REQUEST_TIMEOUT_MS
+        value: 30000
+      - key: AI_MAX_RETRIES
+        value: 1
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: 2000
       - key: ADMIN_PASSWORD
         sync: false
       - key: AUTH_TOKEN_SECRET

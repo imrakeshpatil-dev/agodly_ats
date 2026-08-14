@@ -1953,6 +1953,7 @@ function renderDiagnosticsSection() {
   const data = ui.diagnostics.data;
   const checks = data?.checks || {};
   const diagnostics = data?.diagnostics || {};
+  const ai = diagnostics.ai || {};
   const database = checks.database || {};
   const runtimeStorage = checks.runtimeStorage || {};
   const configuration = checks.configuration || {};
@@ -2003,6 +2004,11 @@ function renderDiagnosticsSection() {
             <tr><td>Latest Record Created</td><td>${escapeHtml(diagnostics.latestRecordCreated || "-")}</td></tr>
             <tr><td>Latest Successful Write</td><td>${escapeHtml(diagnostics.latestSuccessfulWrite || "-")}</td></tr>
             <tr><td>Last Backup Status</td><td>${escapeHtml(diagnostics.lastBackupStatus || "not_configured")}</td></tr>
+            <tr><td>AI Provider</td><td>${escapeHtml(ai.provider || "unknown")}</td></tr>
+            <tr><td>AI Model</td><td>${escapeHtml(ai.model || "-")}</td></tr>
+            <tr><td>AI Status</td><td>${escapeHtml(ai.status || "unknown")}</td></tr>
+            <tr><td>AI Fallback</td><td>${escapeHtml(ai.fallbackStatus || "ready")}</td></tr>
+            <tr><td>AI Last Success</td><td>${escapeHtml(ai.lastSuccessfulRequestAt || "-")}</td></tr>
             <tr><td>Application Version</td><td>${escapeHtml(diagnostics.applicationVersion || "-")}</td></tr>
           </tbody>
         </table>

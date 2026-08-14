@@ -2,8 +2,7 @@ import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import { parse } from "csv-parse/sync";
 
-import { env } from "../config/env";
-import { parseResumeWithAI, ResumeStructuredData } from "./resumeAIParser";
+import { parseResumeWithAIResult, ResumeAIParseResult, ResumeStructuredData } from "./resumeAIParser";
 import { CandidateInput } from "../types/candidate";
 import { uniqueStrings } from "../utils/text";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
@@ -66,6 +65,8 @@ const ROLE_KEYWORDS = [
 ];
 
 export class CvParserService {
+  constructor(private readonly useAICache = true) {}
+
   async parseCsv(buffer: Buffer, sourceFileName: string): Promise<CandidateInput[]> {
     const records = parse(buffer.toString("utf8"), {
       columns: true,
@@ -113,11 +114,9 @@ export class CvParserService {
   }
 
   private async tryExtractCandidateWithAI(resumeText: string, fileName: string): Promise<CandidateInput | null> {
-    if (!env.openAiApiKey) return null;
-
     try {
-      const parsed = await parseResumeWithAI(resumeText);
-      return mapAiStructuredDataToCandidate(parsed, fileName, resumeText);
+      const result = await parseResumeWithAIResult(resumeText, undefined, this.useAICache);
+      return mapAiStructuredDataToCandidate(result, fileName, resumeText);
     } catch {
       return null;
     }
@@ -323,7 +322,7 @@ const sanitizeRole = (value: string): string => normalizeInlineValue(value).slic
 const sanitizeEducation = (value: string): string => normalizeInlineValue(value).slice(0, 160);
 
 const sanitizeLocation = (value: string): string => {
-  let cleaned = normalizeInlineValue(value)
+  const cleaned = normalizeInlineValue(value)
     .replace(/^(location|current location|address|based in)\s*[:\-]?\s*/i, "")
     .replace(/\S+@\S+/g, "")
     .replace(/https?:\/\/\S+/gi, "")
@@ -343,7 +342,7 @@ const sanitizeLocation = (value: string): string => {
 };
 
 const sanitizeCompany = (value: string): string => {
-  let cleaned = normalizeInlineValue(value)
+  const cleaned = normalizeInlineValue(value)
     .replace(/^(current company|present company|company|organization|employer|currently at|working at|at)\s*[:\-]?\s*/i, "")
     .replace(/\S+@\S+/g, "")
     .replace(/https?:\/\/\S+/gi, "")
@@ -585,10 +584,11 @@ const toTitleCase = (value: string): string =>
     .trim();
 
 const mapAiStructuredDataToCandidate = (
-  parsed: ResumeStructuredData,
+  result: ResumeAIParseResult,
   fileName: string,
   resumeText: string
 ): CandidateInput => {
+  const parsed = result.data;
   const normalized = normalizeResumeExtraction(parsed, resumeText);
   const skills = sanitizeSkillsList(normalized.skills || []);
   const experienceYears = clampExperience(normalized.totalExperienceYears ?? extractExperience(resumeText));
@@ -619,11 +619,10 @@ const mapAiStructuredDataToCandidate = (
     parsingStatus: "COMPLETED",
     parsedData: {
       parser: "AI",
-      model: env.openAiModel,
+      ...result.metadata,
       sourceFileName: fileName,
       resumeText: resumeText.slice(0, 40000),
-      ...normalized,
-      rawAiExtraction: parsed
+      ...normalized
     }
   };
 };

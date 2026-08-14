@@ -423,7 +423,7 @@ class CandidateStoreService {
         this.initialized = true;
         return;
       }
-    } catch (error) {
+    } catch {
       await this.loadLegacyFile();
       this.initialized = true;
       return;

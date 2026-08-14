@@ -1,8 +1,7 @@
-import OpenAI from "openai";
-
-import { env } from "../config/env";
 import { AppError } from "../middleware/error.middleware";
 import { aiMemoryService } from "./aiMemory.service";
+import { AIMessage, AIToolDefinition } from "./ai/aiProvider";
+import { getAIProvider } from "./ai/aiProviderFactory";
 import {
   AIToolResponse,
   ATSheetQueryInput,
@@ -32,7 +31,7 @@ Your goal is to help recruiters find talent quickly and make better hiring decis
 
 Use available tools whenever data lookup is required instead of guessing.`;
 
-const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+const TOOL_SCHEMAS: Array<{ type: "function"; function: AIToolDefinition }> = [
   {
     type: "function",
     function: {
@@ -152,7 +151,7 @@ const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   }
 ];
 
-const openAiClient = env.openAiApiKey ? new OpenAI({ apiKey: env.openAiApiKey }) : null;
+const PROVIDER_TOOLS = TOOL_SCHEMAS.map((tool) => tool.function);
 const SKILL_HINTS = [
   "typescript",
   "javascript",
@@ -283,24 +282,7 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
     };
   }
 
-  if (!env.openAiApiKey || !openAiClient) {
-    const heuristic = await runHeuristicAgent(cleanPrompt);
-    const interactionId = await aiMemoryService.recordInteraction({
-      prompt: cleanPrompt,
-      explanation: heuristic.explanation,
-      toolCalls: heuristic.toolCalls,
-      results: heuristic.results,
-      conversationId: conversation.id
-    });
-
-    return {
-      ...heuristic,
-      conversationId: conversation.id,
-      interactionId
-    };
-  }
-
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const messages: AIMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
   if (memoryContext) {
     messages.push({
       role: "system",
@@ -317,97 +299,80 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
   });
   messages.push({ role: "user", content: cleanPrompt });
 
-  const first = await openAiClient.chat.completions.create({
-    model: env.openAiModel,
-    temperature: 0.1,
-    tools: TOOL_SCHEMAS,
-    tool_choice: "auto",
-    messages
-  });
+  try {
+    const provider = getAIProvider();
+    const first = await provider.chat(messages, { temperature: 0.1, tools: PROVIDER_TOOLS });
+    const toolCalls = first.toolCalls;
+    if (!toolCalls.length) {
+      const explanation = first.content || "I’m ready to help. Please provide a specific recruiting request.";
+      return recordAgentResponse(cleanPrompt, conversation.id, explanation, [], []);
+    }
 
-  const firstMessage = first.choices[0]?.message;
-  if (!firstMessage) {
-    throw new AppError("AI agent did not return a response", 502);
-  }
+    const executedToolNames: string[] = [];
+    const toolOutputs: AIToolResponse[] = [];
+    messages.push({ role: "assistant", content: first.content, toolCalls });
 
-  const toolCalls = firstMessage.tool_calls || [];
-  if (!toolCalls.length) {
-    const explanation = String(firstMessage.content || "I’m ready to help. Please provide a specific recruiting request.");
-    const interactionId = await aiMemoryService.recordInteraction({
-      prompt: cleanPrompt,
-      explanation,
-      toolCalls: [],
-      results: [],
-      conversationId: conversation.id
-    });
+    for (const toolCall of toolCalls) {
+      const output = await executeToolCall(toolCall.name, toolCall.arguments || "{}");
+      executedToolNames.push(toolCall.name);
+      toolOutputs.push(output);
+      messages.push({ role: "tool", toolCallId: toolCall.id, content: JSON.stringify(output) });
+    }
 
-    return {
-      explanation,
-      results: [],
-      toolCalls: [],
-      conversationId: conversation.id,
-      interactionId
-    };
-  }
-
-  const executedToolNames: string[] = [];
-  const toolOutputs: AIToolResponse[] = [];
-  messages.push(firstMessage as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam);
-
-  for (const toolCall of toolCalls) {
-    const output = await executeToolCall(toolCall.function.name, toolCall.function.arguments || "{}");
-    executedToolNames.push(toolCall.function.name);
-    toolOutputs.push(output);
-
-    messages.push({
-      role: "tool",
-      tool_call_id: toolCall.id,
-      content: JSON.stringify(output)
-    });
-  }
-
-  const final = await openAiClient.chat.completions.create({
-    model: env.openAiModel,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      ...messages,
-      {
-        role: "user",
-        content:
-          'Using the tool results above, return JSON with this shape only: {"explanation":"...", "results":[...]}'
-      }
-    ]
-  });
-
-  const finalContent = final.choices[0]?.message?.content || "";
-  const parsed = safeParseJson(finalContent);
-  const payload =
-    parsed && typeof parsed.explanation === "string" && Array.isArray(parsed.results)
-      ? {
-          explanation: parsed.explanation,
-          results: parsed.results.map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : { value: item }))
+    const payload = await provider.generateStructuredData<{
+      explanation: string;
+      results: Record<string, unknown>[];
+    }>({
+      temperature: 0.2,
+      messages: [
+        ...messages,
+        {
+          role: "user",
+          content: 'Using the tool results above, return JSON only: {"explanation":"...", "results":[...]}'
         }
-      : {
-          explanation: toolOutputs[0]?.explanation || "No tool output available",
-          results: toolOutputs[0]?.results || []
+      ],
+      validate: (value) => {
+        if (!isObject(value) || typeof value.explanation !== "string" || !Array.isArray(value.results)) {
+          throw new Error("Agent response shape is invalid");
+        }
+        return {
+          explanation: value.explanation,
+          results: value.results.map((item) => isObject(item) ? item : { value: item })
         };
+      }
+    }).catch(() => ({
+      explanation: toolOutputs[0]?.explanation || "No tool output available",
+      results: toolOutputs[0]?.results || []
+    }));
 
+    return recordAgentResponse(cleanPrompt, conversation.id, payload.explanation, payload.results, executedToolNames);
+  } catch {
+    const heuristic = await runHeuristicAgent(cleanPrompt);
+    return recordAgentResponse(
+      cleanPrompt,
+      conversation.id,
+      `AI assistant is temporarily unavailable. Core ATS functions continue to work normally. ${heuristic.explanation}`,
+      heuristic.results,
+      heuristic.toolCalls
+    );
+  }
+};
+
+const recordAgentResponse = async (
+  prompt: string,
+  conversationId: string,
+  explanation: string,
+  results: Record<string, unknown>[],
+  toolCalls: string[]
+): Promise<AgentResponse> => {
   const interactionId = await aiMemoryService.recordInteraction({
-    prompt: cleanPrompt,
-    explanation: payload.explanation,
-    toolCalls: executedToolNames,
-    results: payload.results,
-    conversationId: conversation.id
+    prompt,
+    explanation,
+    toolCalls,
+    results,
+    conversationId
   });
-
-  return {
-    explanation: payload.explanation,
-    results: payload.results,
-    toolCalls: executedToolNames,
-    conversationId: conversation.id,
-    interactionId
-  };
+  return { explanation, results, toolCalls, conversationId, interactionId };
 };
 
 export const applyLearningFeedback = async (

@@ -3,7 +3,7 @@ import path from "path";
 
 import { AppError } from "../middleware/error.middleware";
 import { candidateStoreService } from "./candidate-store.service";
-import { parseResumeWithAI } from "./resumeAIParser";
+import { classifyResumeAIError, parseResumeWithAIResult } from "./resumeAIParser";
 import { extractTextFromDOCX, extractTextFromPDF } from "./resumeTextExtractor";
 import { uniqueStrings } from "../utils/text";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
@@ -90,7 +90,8 @@ class ResumeProcessingService {
         throw new Error("Resume text extraction returned empty content");
       }
 
-      const extracted = await parseResumeWithAI(resumeText);
+      const aiResult = await parseResumeWithAIResult(resumeText);
+      const extracted = aiResult.data;
       const normalized = normalizeResumeExtraction(extracted, resumeText);
       const keywords = uniqueStrings(normalized.keywords);
 
@@ -108,8 +109,9 @@ class ResumeProcessingService {
         keywords,
         resumeUrl,
         parsedData: {
+          parser: "AI",
+          ...aiResult.metadata,
           ...normalized,
-          rawAiExtraction: extracted,
           originalResume: {
             fileName: originalFileName,
             fileType: extension.replace(".", "").toUpperCase(),
@@ -122,7 +124,7 @@ class ResumeProcessingService {
         source: "Resume Upload (AI Parsed)"
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Resume parsing failed";
+      const errorCategory = classifyResumeAIError(error);
 
       if (resumeText.trim()) {
         const fallback = normalizeResumeExtraction({}, resumeText);
@@ -153,13 +155,18 @@ class ResumeProcessingService {
             parsedData: {
               ...fallback,
               parser: "HEURISTIC_FALLBACK",
+              mode: "HEURISTIC_FALLBACK",
+              provider: "none",
+              model: "deterministic",
+              status: "COMPLETED",
+              confidence: fallback.quality.hasContact && fallback.quality.hasRoleSignal ? "medium" : "low",
+              errorCategory,
               originalResume: {
                 fileName: originalFileName,
                 fileType: extension.replace(".", "").toUpperCase(),
                 storedFileName,
                 resumeUrl
               },
-              fallbackReason: message,
               parsedAt: new Date().toISOString()
             }
           });
@@ -171,7 +178,12 @@ class ResumeProcessingService {
         resumeUrl,
         parsingStatus: "FAILED",
         parsedData: {
-          error: message,
+          errorCategory,
+          mode: "HEURISTIC_FALLBACK",
+          provider: "none",
+          model: "deterministic",
+          status: "FAILED",
+          confidence: "low",
           originalResume: {
             fileName: originalFileName,
             fileType: extension.replace(".", "").toUpperCase(),
