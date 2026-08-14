@@ -1728,6 +1728,17 @@ async function ensureCandidatesPageLoaded(options = {}) {
     });
     const payload = await response.json().catch(() => ({}));
 
+    if (response.status === 401 || response.status === 403) {
+      ui.candidates.pageRows = [];
+      ui.candidates.total = 0;
+      ui.candidates.totalPages = 1;
+      ui.candidates.activeCount = 0;
+      ui.candidates.deletedCount = 0;
+      ui.candidates.lastQueryKey = queryKey;
+      ui.bootstrapError = payload?.error?.message || "You do not have permission to view these candidates.";
+      return;
+    }
+
     if (!response.ok || !payload?.success || !payload?.data) {
       throw new Error(payload?.error?.message || "Could not load candidates list");
     }

@@ -2,6 +2,7 @@ import { AppError } from "../middleware/error.middleware";
 import { aiMemoryService } from "./aiMemory.service";
 import { AIMessage, AIToolDefinition } from "./ai/aiProvider";
 import { getAIProvider } from "./ai/aiProviderFactory";
+import type { AuthorizationContext } from "./authorization.service";
 import {
   AIToolResponse,
   ATSheetQueryInput,
@@ -233,21 +234,27 @@ const QUERY_STOP_WORDS = new Set([
   "year"
 ]);
 
-export const handleUserPrompt = async (prompt: string, conversationIdInput?: string): Promise<AgentResponse> => {
+export const handleUserPrompt = async (
+  prompt: string,
+  conversationIdInput?: string,
+  authContext?: AuthorizationContext
+): Promise<AgentResponse> => {
   const cleanPrompt = String(prompt || "").trim();
   if (!cleanPrompt) {
     throw new AppError("prompt is required", 400);
   }
 
-  const conversation = await aiMemoryService.getConversation(conversationIdInput || "");
-  const relevantMemories = await aiMemoryService.findRelevantMemories(cleanPrompt, 3);
+  const ownerUserId = authContext?.user.id;
+  const conversation = await aiMemoryService.getConversation(conversationIdInput || "", ownerUserId);
+  const relevantMemories = await aiMemoryService.findRelevantMemories(cleanPrompt, 3, ownerUserId);
   const memoryContext = buildMemoryContext(relevantMemories);
   const directJobMatchIntent = parseJobMatchIntent(cleanPrompt);
   const directSearchIntent = parseSearchIntentFromPrompt(cleanPrompt);
 
   if (isCandidateCountIntent(cleanPrompt)) {
-    const countOutput = await countActiveCandidates();
+    const countOutput = await countActiveCandidates(authContext);
     const interactionId = await aiMemoryService.recordInteraction({
+      ownerUserId,
       prompt: cleanPrompt,
       explanation: countOutput.explanation,
       toolCalls: ["countActiveCandidates"],
@@ -265,8 +272,9 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
   }
 
   if (directJobMatchIntent) {
-    const matchOutput = await matchCandidatesToJob(cleanPrompt);
+    const matchOutput = await matchCandidatesToJob(cleanPrompt, authContext);
     const interactionId = await aiMemoryService.recordInteraction({
+      ownerUserId,
       prompt: cleanPrompt,
       explanation: matchOutput.explanation,
       toolCalls: ["matchCandidatesToJob"],
@@ -284,8 +292,9 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
   }
 
   if (directSearchIntent.shouldSearch) {
-    const searchOutput = await searchCandidates(directSearchIntent.filters);
+    const searchOutput = await searchCandidates(directSearchIntent.filters, authContext);
     const interactionId = await aiMemoryService.recordInteraction({
+      ownerUserId,
       prompt: cleanPrompt,
       explanation: searchOutput.explanation,
       toolCalls: ["searchCandidates"],
@@ -325,7 +334,7 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
     const toolCalls = first.toolCalls;
     if (!toolCalls.length) {
       const explanation = first.content || "I’m ready to help. Please provide a specific recruiting request.";
-      return recordAgentResponse(cleanPrompt, conversation.id, explanation, [], []);
+      return recordAgentResponse(cleanPrompt, conversation.id, explanation, [], [], ownerUserId);
     }
 
     const executedToolNames: string[] = [];
@@ -333,7 +342,7 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
     messages.push({ role: "assistant", content: first.content, toolCalls });
 
     for (const toolCall of toolCalls) {
-      const output = await executeToolCall(toolCall.name, toolCall.arguments || "{}");
+      const output = await executeToolCall(toolCall.name, toolCall.arguments || "{}", authContext);
       executedToolNames.push(toolCall.name);
       toolOutputs.push(output);
       messages.push({ role: "tool", toolCallId: toolCall.id, content: JSON.stringify(output) });
@@ -365,15 +374,16 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
       results: toolOutputs[0]?.results || []
     }));
 
-    return recordAgentResponse(cleanPrompt, conversation.id, payload.explanation, payload.results, executedToolNames);
+    return recordAgentResponse(cleanPrompt, conversation.id, payload.explanation, payload.results, executedToolNames, ownerUserId);
   } catch {
-    const heuristic = await runHeuristicAgent(cleanPrompt);
+    const heuristic = await runHeuristicAgent(cleanPrompt, authContext);
     return recordAgentResponse(
       cleanPrompt,
       conversation.id,
       `AI assistant is temporarily unavailable. Core ATS functions continue to work normally. ${heuristic.explanation}`,
       heuristic.results,
-      heuristic.toolCalls
+      heuristic.toolCalls,
+      ownerUserId
     );
   }
 };
@@ -383,9 +393,11 @@ const recordAgentResponse = async (
   conversationId: string,
   explanation: string,
   results: Record<string, unknown>[],
-  toolCalls: string[]
+  toolCalls: string[],
+  ownerUserId?: string
 ): Promise<AgentResponse> => {
   const interactionId = await aiMemoryService.recordInteraction({
+    ownerUserId,
     prompt,
     explanation,
     toolCalls,
@@ -398,12 +410,14 @@ const recordAgentResponse = async (
 export const applyLearningFeedback = async (
   interactionId: string,
   helpful: boolean,
-  correction?: string
+  correction?: string,
+  ownerUserId?: string
 ): Promise<{ interactionId: string; helpful: boolean }> => {
   const result = await aiMemoryService.applyFeedback({
     interactionId,
     helpful,
-    correction
+    correction,
+    ownerUserId
   });
 
   return {
@@ -412,7 +426,11 @@ export const applyLearningFeedback = async (
   };
 };
 
-const executeToolCall = async (toolName: string, rawArgs: string): Promise<AIToolResponse> => {
+const executeToolCall = async (
+  toolName: string,
+  rawArgs: string,
+  authContext?: AuthorizationContext
+): Promise<AIToolResponse> => {
   const args = safeParseJson(rawArgs) || {};
 
   switch (toolName) {
@@ -428,17 +446,17 @@ const executeToolCall = async (toolName: string, rawArgs: string): Promise<AIToo
         company: toOptionalString(args.company),
         role: toOptionalString(args.role),
         limit: toOptionalNumber(args.limit) ?? undefined
-      } satisfies CandidateSearchFilters);
+      } satisfies CandidateSearchFilters, authContext);
 
     case "matchCandidatesToJob":
       return matchCandidatesToJob({
         jobDescription: toOptionalString(args.jobDescription) || "",
         keywords: toOptionalString(args.keywords),
         topK: toOptionalNumber(args.topK) ?? undefined
-      });
+      }, authContext);
 
     case "summarizeCandidate":
-      return summarizeCandidate(toOptionalString(args.candidateId) || "");
+      return summarizeCandidate(toOptionalString(args.candidateId) || "", authContext);
 
     case "generateInterviewQuestions":
       return generateInterviewQuestions(toOptionalString(args.skill) || "");
@@ -454,7 +472,7 @@ const executeToolCall = async (toolName: string, rawArgs: string): Promise<AIToo
         sheet: toOptionalString(args.sheet),
         filters: isObject(args.filters) ? args.filters : undefined,
         limit: toOptionalNumber(args.limit) ?? undefined
-      } satisfies ATSheetQueryInput);
+      } satisfies ATSheetQueryInput, authContext);
 
     default:
       throw new AppError(`Unsupported tool requested: ${toolName}`, 400);
@@ -462,7 +480,8 @@ const executeToolCall = async (toolName: string, rawArgs: string): Promise<AIToo
 };
 
 const runHeuristicAgent = async (
-  prompt: string
+  prompt: string,
+  authContext?: AuthorizationContext
 ): Promise<{ explanation: string; results: Record<string, unknown>[]; toolCalls: string[] }> => {
   const lower = prompt.toLowerCase();
   let output: AIToolResponse;
@@ -481,7 +500,7 @@ const runHeuristicAgent = async (
       company: searchIntent.filters.company || extractAfterKeyword(prompt, "company"),
       experience: searchIntent.filters.experience ?? extractNumber(prompt) ?? undefined,
       limit: 20
-    });
+    }, authContext);
     toolName = "searchCandidates";
   } else if (lower.includes("latest") || lower.includes("today") || lower.includes("news") || lower.includes("internet")) {
     output = await webSearch(prompt, 5);
@@ -490,7 +509,7 @@ const runHeuristicAgent = async (
     output = await queryAtsSheet({
       sheet: lower.includes("pipeline") ? "pipeline" : lower.includes("analytics") ? "analytics" : "candidates",
       limit: 30
-    });
+    }, authContext);
     toolName = "queryAtsSheet";
   } else if (lower.includes("interview question")) {
     const skill = extractAfterKeyword(prompt, "for") || "javascript";
@@ -502,10 +521,10 @@ const runHeuristicAgent = async (
     toolName = "draftRecruiterMessage";
   } else if (lower.includes("summarize candidate")) {
     const candidateId = extractCandidateId(prompt);
-    output = await summarizeCandidate(candidateId || "");
+    output = await summarizeCandidate(candidateId || "", authContext);
     toolName = "summarizeCandidate";
   } else if (lower.includes("match") && lower.includes("job")) {
-    output = await matchCandidatesToJob(prompt);
+    output = await matchCandidatesToJob(prompt, authContext);
     toolName = "matchCandidatesToJob";
   } else {
     output = await searchCandidates({
@@ -519,7 +538,7 @@ const runHeuristicAgent = async (
       company: searchIntent.filters.company || extractAfterKeyword(prompt, "company"),
       experience: searchIntent.filters.experience ?? extractNumber(prompt) ?? undefined,
       limit: 20
-    });
+    }, authContext);
     toolName = "searchCandidates";
   }
 

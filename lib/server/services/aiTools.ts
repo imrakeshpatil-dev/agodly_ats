@@ -1,6 +1,7 @@
 import { env } from "../config/env";
 import { AppError } from "../middleware/error.middleware";
 import { candidateStoreService } from "./candidate-store.service";
+import { authorizationService, type AuthorizationContext } from "./authorization.service";
 import { CandidateRecord } from "../types/candidate";
 import { getAIProvider } from "./ai/aiProviderFactory";
 
@@ -366,10 +367,16 @@ const scoreCandidate = (
   };
 };
 
-const getFallbackCandidates = async (): Promise<CandidateRecord[]> => candidateStoreService.getActiveCandidates();
+const getFallbackCandidates = async (authContext?: AuthorizationContext): Promise<CandidateRecord[]> =>
+  authContext
+    ? candidateStoreService.getActiveCandidatesForContext(authContext)
+    : candidateStoreService.getActiveCandidates();
 
-const searchFromFallback = async (filters: CandidateSearchFilters): Promise<Record<string, unknown>[]> => {
-  const candidates = await getFallbackCandidates();
+const searchFromFallback = async (
+  filters: CandidateSearchFilters,
+  authContext?: AuthorizationContext
+): Promise<Record<string, unknown>[]> => {
+  const candidates = await getFallbackCandidates(authContext);
   const context = buildSearchContext(filters);
   const matched = candidates
     .map((candidate) => scoreCandidate(candidate, context))
@@ -381,12 +388,15 @@ const searchFromFallback = async (filters: CandidateSearchFilters): Promise<Reco
   return matched;
 };
 
-export const searchCandidates = async (filters: CandidateSearchFilters): Promise<AIToolResponse> => {
+export const searchCandidates = async (
+  filters: CandidateSearchFilters,
+  authContext?: AuthorizationContext
+): Promise<AIToolResponse> => {
   const prisma = getPrismaClient();
   const context = buildSearchContext(filters);
   let results: Record<string, unknown>[] = [];
 
-  if (prisma?.candidate?.findMany) {
+  if (!authContext && prisma?.candidate?.findMany) {
     const where: Record<string, unknown> = {};
 
     if (filters.role) {
@@ -415,10 +425,10 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
         .slice(0, context.limit)
         .map((entry) => entry.candidate);
     } catch {
-      results = await searchFromFallback(filters);
+      results = await searchFromFallback(filters, authContext);
     }
   } else {
-    results = await searchFromFallback(filters);
+    results = await searchFromFallback(filters, authContext);
   }
 
   if (
@@ -430,7 +440,7 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
       ...filters,
       requireAllSkills: false
     };
-    results = await searchFromFallback(relaxedFilters);
+    results = await searchFromFallback(relaxedFilters, authContext);
   }
 
   return {
@@ -441,8 +451,11 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
   };
 };
 
-export const countActiveCandidates = async (): Promise<AIToolResponse> => {
-  const candidates = (await candidateStoreService.getAllCandidates()).filter(
+export const countActiveCandidates = async (authContext?: AuthorizationContext): Promise<AIToolResponse> => {
+  const allCandidates = authContext
+    ? await candidateStoreService.getCandidatesForContext(authContext)
+    : await candidateStoreService.getAllCandidates();
+  const candidates = allCandidates.filter(
     (candidate) => candidate.status !== "DELETED"
   );
   const count = candidates.length;
@@ -598,7 +611,10 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
   }
 };
 
-export const matchCandidatesToJob = async (jobMatchInput: string | JobMatchInput): Promise<AIToolResponse> => {
+export const matchCandidatesToJob = async (
+  jobMatchInput: string | JobMatchInput,
+  authContext?: AuthorizationContext
+): Promise<AIToolResponse> => {
   const jobDescription =
     typeof jobMatchInput === "string" ? jobMatchInput : String(jobMatchInput.jobDescription || "");
   const keywords =
@@ -629,7 +645,7 @@ export const matchCandidatesToJob = async (jobMatchInput: string | JobMatchInput
     limit: 120
   };
 
-  const searchResult = await searchCandidates(filters);
+  const searchResult = await searchCandidates(filters, authContext);
   const heuristicRanked = searchResult.results
     .map((candidate) => {
       const candidateSkills = Array.isArray(candidate.skills)
@@ -721,7 +737,10 @@ export const matchCandidatesToJob = async (jobMatchInput: string | JobMatchInput
   };
 };
 
-export const summarizeCandidate = async (candidateId: string): Promise<AIToolResponse> => {
+export const summarizeCandidate = async (
+  candidateId: string,
+  authContext?: AuthorizationContext
+): Promise<AIToolResponse> => {
   const cleanId = String(candidateId || "").trim();
   if (!cleanId) {
     throw new AppError("candidateId is required", 400);
@@ -730,7 +749,7 @@ export const summarizeCandidate = async (candidateId: string): Promise<AIToolRes
   let candidate: Record<string, unknown> | null = null;
   const prisma = getPrismaClient();
 
-  if (prisma?.candidate?.findUnique) {
+  if (!authContext && prisma?.candidate?.findUnique) {
     try {
       candidate = await prisma.candidate.findUnique({ where: { id: cleanId } });
     } catch {
@@ -739,13 +758,23 @@ export const summarizeCandidate = async (candidateId: string): Promise<AIToolRes
   }
 
   if (!candidate) {
-    const fallback = await candidateStoreService.getCandidateById(cleanId);
+    const fallback = authContext
+      ? await candidateStoreService.getCandidateForContext(authContext, cleanId)
+      : await candidateStoreService.getCandidateById(cleanId);
     candidate = fallback ? normalizeCandidate(fallback) : null;
   } else {
     candidate = normalizeCandidate(candidate);
   }
 
   if (!candidate) {
+    if (authContext) {
+      await authorizationService.logUnauthorizedAccess({
+        userId: authContext.user.id,
+        endpoint: "ai/summarizeCandidate",
+        entityType: "candidate-ai-summary",
+        entityId: cleanId
+      });
+    }
     throw new AppError("Candidate not found", 404);
   }
 
@@ -957,11 +986,16 @@ export const webSearch = async (query: string, maxResults = 5): Promise<AIToolRe
   }
 };
 
-export const queryAtsSheet = async (input: ATSheetQueryInput): Promise<AIToolResponse> => {
+export const queryAtsSheet = async (
+  input: ATSheetQueryInput,
+  authContext?: AuthorizationContext
+): Promise<AIToolResponse> => {
   const sheet = String(input.sheet || "candidates").trim().toLowerCase();
   const filters = input.filters && typeof input.filters === "object" ? input.filters : {};
   const limit = Math.min(Math.max(Number(input.limit || 25), 1), 200);
-  const allCandidates = await candidateStoreService.getAllCandidates();
+  const allCandidates = authContext
+    ? await candidateStoreService.getCandidatesForContext(authContext)
+    : await candidateStoreService.getAllCandidates();
 
   if (sheet === "candidates") {
     const rows = allCandidates

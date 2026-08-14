@@ -8,6 +8,9 @@ datasource db {
 
 model Candidate {
   id              String          @id @default(cuid())
+  ownerUserId     String?
+  uploadedByUserId String?
+  assignedRecruiterId String?
   name            String
   email           String?
   phone           String?
@@ -36,6 +39,9 @@ model Candidate {
   activities      Activity[]
 
   @@index([status, createdAt])
+  @@index([ownerUserId])
+  @@index([uploadedByUserId])
+  @@index([assignedRecruiterId])
   @@index([email])
   @@index([phone])
   @@index([jobId])

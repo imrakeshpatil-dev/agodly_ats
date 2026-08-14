@@ -39,6 +39,9 @@ const parsedCandidate: CandidateInput = {
 const storedCandidate: CandidateRecord = {
   ...parsedCandidate,
   id: "candidate-existing",
+  ownerUserId: null,
+  uploadedByUserId: null,
+  assignedRecruiterId: null,
   resumeUrl: "",
   parsedData: null,
   parsingStatus: "COMPLETED",

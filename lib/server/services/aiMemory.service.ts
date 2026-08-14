@@ -3,6 +3,7 @@ import path from "path";
 
 interface MemoryEntry {
   id: string;
+  ownerUserId: string;
   prompt: string;
   explanation: string;
   toolCalls: string[];
@@ -21,6 +22,7 @@ interface ConversationMessage {
 
 interface ConversationThread {
   id: string;
+  ownerUserId: string;
   messages: ConversationMessage[];
   createdAt: string;
   updatedAt: string;
@@ -32,6 +34,7 @@ interface AIMemoryStore {
 }
 
 interface RecordInteractionInput {
+  ownerUserId?: string;
   prompt: string;
   explanation: string;
   toolCalls: string[];
@@ -41,15 +44,18 @@ interface RecordInteractionInput {
 
 interface FeedbackInput {
   interactionId: string;
+  ownerUserId?: string;
   helpful: boolean;
   correction?: string;
 }
 
 const STORE_FILE = path.resolve(process.cwd(), "data", "ai-memory.json");
 
-class AIMemoryService {
+export class AIMemoryService {
   private initialized = false;
   private store: AIMemoryStore = { memories: [], conversations: [] };
+
+  constructor(private readonly storeFile = STORE_FILE) {}
 
   async recordInteraction(input: RecordInteractionInput): Promise<string> {
     await this.ensureLoaded();
@@ -60,6 +66,7 @@ class AIMemoryService {
 
     this.store.memories.unshift({
       id,
+      ownerUserId: normalizeOwnerId(input.ownerUserId),
       prompt: String(input.prompt || "").trim(),
       explanation: String(input.explanation || "").trim(),
       toolCalls: Array.isArray(input.toolCalls) ? input.toolCalls.map((item) => String(item)) : [],
@@ -72,8 +79,8 @@ class AIMemoryService {
 
     this.store.memories = this.store.memories.slice(0, 1000);
 
-    await this.appendConversationMessage(input.conversationId, "user", input.prompt, false);
-    await this.appendConversationMessage(input.conversationId, "assistant", input.explanation, false);
+    await this.appendConversationMessage(input.conversationId, "user", input.prompt, false, input.ownerUserId);
+    await this.appendConversationMessage(input.conversationId, "assistant", input.explanation, false, input.ownerUserId);
     await this.persist();
 
     return id;
@@ -82,7 +89,10 @@ class AIMemoryService {
   async applyFeedback(input: FeedbackInput): Promise<MemoryEntry> {
     await this.ensureLoaded();
 
-    const interaction = this.store.memories.find((item) => item.id === input.interactionId);
+    const ownerUserId = normalizeOwnerId(input.ownerUserId);
+    const interaction = this.store.memories.find((item) =>
+      item.id === input.interactionId && (!ownerUserId || item.ownerUserId === ownerUserId)
+    );
     if (!interaction) {
       throw new Error("Interaction not found");
     }
@@ -95,15 +105,19 @@ class AIMemoryService {
     return { ...interaction };
   }
 
-  async getConversation(conversationId: string): Promise<ConversationThread> {
+  async getConversation(conversationId: string, ownerUserIdInput?: string): Promise<ConversationThread> {
     await this.ensureLoaded();
     const cleanId = String(conversationId || "").trim() || createId("conv");
+    const ownerUserId = normalizeOwnerId(ownerUserIdInput);
 
-    let thread = this.store.conversations.find((item) => item.id === cleanId);
+    let thread = this.store.conversations.find((item) =>
+      item.id === cleanId && (!ownerUserId || item.ownerUserId === ownerUserId)
+    );
     if (!thread) {
       const now = new Date().toISOString();
       thread = {
         id: cleanId,
+        ownerUserId,
         messages: [],
         createdAt: now,
         updatedAt: now
@@ -119,10 +133,19 @@ class AIMemoryService {
     };
   }
 
-  async appendConversationMessage(conversationId: string, role: "user" | "assistant", content: string, persist = true): Promise<void> {
+  async appendConversationMessage(
+    conversationId: string,
+    role: "user" | "assistant",
+    content: string,
+    persist = true,
+    ownerUserIdInput?: string
+  ): Promise<void> {
     await this.ensureLoaded();
-    const thread = await this.getConversation(conversationId);
-    const index = this.store.conversations.findIndex((item) => item.id === thread.id);
+    const ownerUserId = normalizeOwnerId(ownerUserIdInput);
+    const thread = await this.getConversation(conversationId, ownerUserId);
+    const index = this.store.conversations.findIndex((item) =>
+      item.id === thread.id && (!ownerUserId || item.ownerUserId === ownerUserId)
+    );
     if (index < 0) return;
 
     const now = new Date().toISOString();
@@ -139,13 +162,15 @@ class AIMemoryService {
     }
   }
 
-  async findRelevantMemories(prompt: string, limit = 3): Promise<MemoryEntry[]> {
+  async findRelevantMemories(prompt: string, limit = 3, ownerUserIdInput?: string): Promise<MemoryEntry[]> {
     await this.ensureLoaded();
 
     const queryTerms = tokenize(prompt);
     if (!queryTerms.length) return [];
+    const ownerUserId = normalizeOwnerId(ownerUserIdInput);
 
     const scored = this.store.memories
+      .filter((item) => !ownerUserId || item.ownerUserId === ownerUserId)
       .map((item) => {
         const haystackTerms = tokenize(`${item.prompt} ${item.explanation} ${item.correction}`);
         const overlap = countOverlap(queryTerms, haystackTerms);
@@ -164,9 +189,9 @@ class AIMemoryService {
   private async ensureLoaded(): Promise<void> {
     if (this.initialized) return;
 
-    await fs.mkdir(path.dirname(STORE_FILE), { recursive: true });
+    await fs.mkdir(path.dirname(this.storeFile), { recursive: true });
     try {
-      const raw = await fs.readFile(STORE_FILE, "utf8");
+      const raw = await fs.readFile(this.storeFile, "utf8");
       const parsed = JSON.parse(raw) as Partial<AIMemoryStore>;
       this.store = {
         memories: Array.isArray(parsed.memories) ? parsed.memories.map((item) => normalizeMemoryEntry(item)) : [],
@@ -181,7 +206,7 @@ class AIMemoryService {
   }
 
   private async persist(): Promise<void> {
-    await fs.writeFile(STORE_FILE, JSON.stringify(this.store, null, 2), "utf8");
+    await fs.writeFile(this.storeFile, JSON.stringify(this.store, null, 2), "utf8");
   }
 }
 
@@ -189,6 +214,7 @@ const normalizeMemoryEntry = (item: Partial<MemoryEntry>): MemoryEntry => {
   const now = new Date().toISOString();
   return {
     id: String(item.id || createId("mem")),
+    ownerUserId: normalizeOwnerId(item.ownerUserId),
     prompt: String(item.prompt || ""),
     explanation: String(item.explanation || ""),
     toolCalls: Array.isArray(item.toolCalls) ? item.toolCalls.map((entry) => String(entry)) : [],
@@ -204,6 +230,7 @@ const normalizeConversation = (item: Partial<ConversationThread>): ConversationT
   const now = new Date().toISOString();
   return {
     id: String(item.id || createId("conv")),
+    ownerUserId: normalizeOwnerId(item.ownerUserId),
     messages: Array.isArray(item.messages)
       ? item.messages.map((message) => ({
           role: message.role === "assistant" ? "assistant" : "user",
@@ -217,6 +244,8 @@ const normalizeConversation = (item: Partial<ConversationThread>): ConversationT
 };
 
 const createId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeOwnerId = (value: unknown): string => String(value || "").trim().toLowerCase();
 
 const tokenize = (value: string): string[] =>
   String(value || "")
@@ -236,4 +265,3 @@ const countOverlap = (a: string[], b: string[]): number => {
 };
 
 export const aiMemoryService = new AIMemoryService();
-
