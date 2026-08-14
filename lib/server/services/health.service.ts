@@ -7,6 +7,8 @@ import { prisma } from "./prisma.service";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 import { AIHealthResult } from "./ai/aiProvider";
 import { getAIProvider } from "./ai/aiProviderFactory";
+import { appStateStoreService } from "./app-state-store.service";
+import { candidateStoreService } from "./candidate-store.service";
 
 export interface HealthStatus {
   success: true;
@@ -107,11 +109,12 @@ export const getReadinessStatus = async (): Promise<ReadinessStatus> => {
 
 export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
   const readiness = await getReadinessStatus();
-  const [candidateDiag, jobDiag, clientDiag, activityDiag, lastBackupStatus, ai] = await Promise.all([
+  const [candidateDiag, jobDiag, clientDiag, activityDiag, runtimeDataDiag, lastBackupStatus, ai] = await Promise.all([
     readTable(() => prisma.candidate.count()),
     readTable(() => prisma.job.count()),
     readTable(() => prisma.client.count()),
     readTable(() => prisma.activity.count()),
+    readRuntimeApplicationData(),
     getLastBackupStatus(),
     getAIProvider().healthCheck()
   ]);
@@ -155,12 +158,14 @@ export const getDiagnosticsStatus = async (): Promise<DiagnosticsStatus> => {
         }
       },
       counts: {
-        candidates: candidateDiag.count,
-        jobs: jobDiag.count,
-        clients: clientDiag.count,
-        activities: activityDiag.count
+        candidates: runtimeDataDiag.counts?.candidates ?? null,
+        jobs: runtimeDataDiag.counts?.jobs ?? null,
+        clients: runtimeDataDiag.counts?.clients ?? null,
+        activities: runtimeDataDiag.counts?.activities ?? null
       },
-      latestRecordCreated: newestIso([latestCandidate?.createdAt, latestJob?.createdAt, latestClient?.createdAt]),
+      latestRecordCreated:
+        runtimeDataDiag.latestRecordCreated ??
+        newestIso([latestCandidate?.createdAt, latestJob?.createdAt, latestClient?.createdAt]),
       latestSuccessfulWrite: latestRuntimeWrite?.updatedAt ? latestRuntimeWrite.updatedAt.toISOString() : null,
       latestFailedWrite: null,
       lastBackupStatus,
@@ -213,7 +218,7 @@ const checkDatabaseStatus = async (): Promise<ReadinessStatus["checks"]["databas
   const durable = isDatabaseDurable(provider, env.databaseUrl);
   try {
     await prisma.$queryRaw`SELECT 1`;
-    await prisma.candidate.count();
+    await prisma.runtimeState.count();
     return {
       ok: true,
       provider,
@@ -227,6 +232,34 @@ const checkDatabaseStatus = async (): Promise<ReadinessStatus["checks"]["databas
       durable,
       environment: env.nodeEnv,
       error: error instanceof Error ? error.message : "Database health check failed"
+    };
+  }
+};
+
+const readRuntimeApplicationData = async (): Promise<{
+  counts?: DiagnosticsStatus["diagnostics"]["counts"];
+  latestRecordCreated?: string | null;
+  error?: string;
+}> => {
+  try {
+    const candidates = await candidateStoreService.getActiveCandidates();
+    const snapshot = await appStateStoreService.getSnapshot(candidates);
+    return {
+      counts: {
+        candidates: candidates.length,
+        jobs: snapshot.jobs.length,
+        clients: snapshot.clients.length,
+        activities: snapshot.activities.length
+      },
+      latestRecordCreated: newestIsoValues([
+        ...candidates.map((candidate) => candidate.createdAt),
+        ...snapshot.jobs.map((job) => job.createdAt),
+        ...snapshot.clients.map((client) => client.createdAt)
+      ])
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Runtime application data read failed"
     };
   }
 };
@@ -288,6 +321,14 @@ const newestIso = (values: Array<Date | null | undefined>): string | null => {
     .filter((value) => Number.isFinite(value));
   if (!dates.length) return null;
   return new Date(Math.max(...dates)).toISOString();
+};
+
+const newestIsoValues = (values: unknown[]): string | null => {
+  const timestamps = values
+    .map((value) => Date.parse(String(value || "")))
+    .filter((value) => Number.isFinite(value));
+  if (!timestamps.length) return null;
+  return new Date(Math.max(...timestamps)).toISOString();
 };
 
 const getMigrationVersion = async (): Promise<string> => {

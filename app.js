@@ -1980,7 +1980,7 @@ function renderDiagnosticsSection() {
       <div class="section-head">
         <div>
           <h2 class="panel-title">Database Read Status</h2>
-          <p class="panel-subtitle">Dashboard values must come from readable database tables, not fallback zeros.</p>
+          <p class="panel-subtitle">Counts are read from the durable RuntimeState records used by the live ATS.</p>
         </div>
         <button class="tool-btn primary" data-action="reload-diagnostics" type="button">Refresh Diagnostics</button>
       </div>
@@ -2007,6 +2007,7 @@ function renderDiagnosticsSection() {
             <tr><td>AI Provider</td><td>${escapeHtml(ai.provider || "unknown")}</td></tr>
             <tr><td>AI Model</td><td>${escapeHtml(ai.model || "-")}</td></tr>
             <tr><td>AI Status</td><td>${escapeHtml(ai.status || "unknown")}</td></tr>
+            <tr><td>AI Error Category</td><td>${escapeHtml(ai.errorCategory || "-")}</td></tr>
             <tr><td>AI Fallback</td><td>${escapeHtml(ai.fallbackStatus || "ready")}</td></tr>
             <tr><td>AI Last Success</td><td>${escapeHtml(ai.lastSuccessfulRequestAt || "-")}</td></tr>
             <tr><td>Application Version</td><td>${escapeHtml(diagnostics.applicationVersion || "-")}</td></tr>
