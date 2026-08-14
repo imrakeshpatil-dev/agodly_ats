@@ -3,6 +3,9 @@ export type CandidateParsingStatus = "PENDING" | "COMPLETED" | "FAILED";
 
 export interface CandidateRecord {
   id: string;
+  ownerUserId: string | null;
+  uploadedByUserId: string | null;
+  assignedRecruiterId: string | null;
   name: string;
   email: string;
   phone: string;
@@ -30,6 +33,9 @@ export interface CandidateRecord {
 }
 
 export interface CandidateInput {
+  ownerUserId?: string | null;
+  uploadedByUserId?: string | null;
+  assignedRecruiterId?: string | null;
   name: string;
   email: string;
   phone: string;
@@ -51,6 +57,8 @@ export interface CandidateInput {
 }
 
 export interface CandidateProfileUpdate {
+  ownerUserId?: string | null;
+  assignedRecruiterId?: string | null;
   name?: string;
   email?: string;
   phone?: string;

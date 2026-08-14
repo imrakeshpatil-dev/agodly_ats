@@ -21,6 +21,9 @@ export const attributeCandidateToUploader = (
 
   return {
     ...candidate,
+    ownerUserId: String(actor.id || "") || null,
+    uploadedByUserId: String(actor.id || "") || null,
+    assignedRecruiterId: String(actor.id || "") || null,
     recruiter: uploaderName,
     parsedData: {
       ...(candidate.parsedData || {}),

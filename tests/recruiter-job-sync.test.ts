@@ -45,11 +45,12 @@ test("recruiter bulk upload history is stored in an isolated user bucket", async
 
   assert.match(controller, /updateBulkUploadForUser\(authUser\.id, requestedBulkUpload\)/);
   assert.match(controller, /bulkUploadOwnerId: founder \? undefined : authUser\.id/);
-  assert.match(controller, /isCandidateAssignedToUser\(authUser, candidate\)/);
+  assert.match(controller, /authorizationService\.scopeAppState\(context, snapshot\)/);
+  assert.match(controller, /candidateStoreService\.getCandidatesForContext\(context\)/);
   assert.match(controller, /includeOwnedUploadCandidates/);
   assert.match(bulkUploadController, /recordBulkUploadForUser\(authUser\.id/);
   assert.match(browser, /const recruiterSections = new Set\(\[[\s\S]*?"bulk-upload"/);
-  assert.match(candidateController, /duplicates\.filter\(\(group\) => isCandidateAssignedToUser\(authUser, group\.duplicateCandidate\)\)/);
+  assert.match(candidateController, /authorizationService\.canViewCandidate\(context, group\.duplicateCandidate\)/);
   assert.match(candidateController, /assertCanMutateCandidate\(req, duplicateCandidate\)/);
 });
 

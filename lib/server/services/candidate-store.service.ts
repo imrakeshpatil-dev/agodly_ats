@@ -9,6 +9,7 @@ import { CandidateInput, CandidateProfileUpdate, CandidateRecord, DuplicateGroup
 import { matchCandidateIdentity, summarizeCandidateIdentityMatches } from "../utils/candidate-duplicates";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { runtimeStateService } from "./runtime-state.service";
+import { authorizationService, type AuthorizationContext } from "./authorization.service";
 
 interface CandidateStoreFile {
   candidates: CandidateRecord[];
@@ -56,6 +57,16 @@ class CandidateStoreService {
     return this.records.filter((item) => item.status === "ACTIVE").map((item) => ({ ...item }));
   }
 
+  async getCandidatesForContext(context: AuthorizationContext): Promise<CandidateRecord[]> {
+    await this.reloadFromStore();
+    return authorizationService.scopeCandidates(context, this.records).map((item) => ({ ...item }));
+  }
+
+  async getActiveCandidatesForContext(context: AuthorizationContext): Promise<CandidateRecord[]> {
+    const candidates = await this.getCandidatesForContext(context);
+    return candidates.filter((item) => item.status === "ACTIVE");
+  }
+
   async getAllCandidates(): Promise<CandidateRecord[]> {
     await this.reloadFromStore();
     return this.records.map((item) => ({ ...item }));
@@ -67,45 +78,28 @@ class CandidateStoreService {
     return found ? { ...found } : null;
   }
 
+  async getCandidateForContext(
+    context: AuthorizationContext,
+    candidateId: string
+  ): Promise<CandidateRecord | null> {
+    await this.reloadFromStore();
+    const found = this.records.find((item) => item.id === candidateId);
+    return found && authorizationService.canViewCandidate(context, found) ? { ...found } : null;
+  }
+
   async listCandidates(options: CandidateListOptions): Promise<CandidateListResult> {
     await this.reloadFromStore();
 
-    const status = normalizeListStatus(options.status);
-    const query = String(options.query || "").trim().toLowerCase();
-    const page = normalizePositiveInt(options.page, 1);
-    const limit = Math.min(normalizePositiveInt(options.limit, 25), 100);
-    const sortBy = normalizeSortBy(options.sortBy);
-    const sortDir = normalizeSortDir(options.sortDir);
+    return listCandidateRecords(this.records, options);
+  }
 
-    const queryFiltered = this.records.filter((item) => matchesCandidateQuery(item, query));
-    const statusCounts = {
-      active: queryFiltered.filter((item) => item.status === "ACTIVE").length,
-      deleted: queryFiltered.filter((item) => item.status === "DELETED").length
-    };
-
-    const statusFiltered = queryFiltered.filter((item) => {
-      if (status === "ACTIVE") return item.status === "ACTIVE";
-      if (status === "DELETED") return item.status === "DELETED";
-      return item.status === "ACTIVE" || item.status === "DELETED";
-    });
-
-    const sorted = [...statusFiltered].sort((a, b) => compareCandidateValues(a, b, sortBy, sortDir));
-
-    const total = sorted.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage = Math.min(page, totalPages);
-    const start = (safePage - 1) * limit;
-    const end = start + limit;
-    const rows = sorted.slice(start, end).map((item) => ({ ...item }));
-
-    return {
-      rows,
-      page: safePage,
-      limit,
-      total,
-      totalPages,
-      statusCounts
-    };
+  async listCandidatesForContext(
+    context: AuthorizationContext,
+    options: CandidateListOptions
+  ): Promise<CandidateListResult> {
+    await this.reloadFromStore();
+    const scoped = authorizationService.scopeCandidates(context, this.records);
+    return listCandidateRecords(scoped, options);
   }
 
   async findPotentialMatches(input: CandidateInput): Promise<CandidateRecord[]> {
@@ -139,6 +133,9 @@ class CandidateStoreService {
     const now = new Date().toISOString();
     const record: CandidateRecord = {
       id: createId(),
+      ownerUserId: normalizeOwnershipId(normalized.ownerUserId),
+      uploadedByUserId: normalizeOwnershipId(normalized.uploadedByUserId),
+      assignedRecruiterId: normalizeOwnershipId(normalized.assignedRecruiterId),
       name: normalized.name,
       email: normalized.email,
       phone: normalized.phone,
@@ -202,6 +199,9 @@ class CandidateStoreService {
     const now = new Date().toISOString();
     const record: CandidateRecord = {
       id: createId(),
+      ownerUserId: normalizeOwnershipId(normalized.ownerUserId),
+      uploadedByUserId: normalizeOwnershipId(normalized.uploadedByUserId),
+      assignedRecruiterId: normalizeOwnershipId(normalized.assignedRecruiterId),
       name: normalized.name,
       email: normalized.email,
       phone: normalized.phone,
@@ -318,6 +318,14 @@ class CandidateStoreService {
 
     if (patch.name !== undefined) {
       candidate.name = patch.name.trim() || candidate.name;
+    }
+
+    if (patch.ownerUserId !== undefined) {
+      candidate.ownerUserId = normalizeOwnershipId(patch.ownerUserId);
+    }
+
+    if (patch.assignedRecruiterId !== undefined) {
+      candidate.assignedRecruiterId = normalizeOwnershipId(patch.assignedRecruiterId);
     }
 
     if (patch.email !== undefined) {
@@ -545,6 +553,9 @@ const normalizeCandidateRecord = (item: Partial<CandidateRecord> | null | undefi
 
   return {
     id: String(item.id),
+    ownerUserId: normalizeOwnershipId(item.ownerUserId ?? item.parsedData?.uploadedByUserId),
+    uploadedByUserId: normalizeOwnershipId(item.uploadedByUserId ?? item.parsedData?.uploadedByUserId),
+    assignedRecruiterId: normalizeOwnershipId(item.assignedRecruiterId),
     name: sanitizeLine(String(item.name || "Unknown Candidate"), 90) || "Unknown Candidate",
     email: normalizeEmail(item.email || ""),
     phone: String(item.phone || ""),
@@ -591,6 +602,42 @@ const normalizeParsingStatus = (value: unknown): CandidateRecord["parsingStatus"
   if (status === "PENDING") return "PENDING";
   if (status === "FAILED") return "FAILED";
   return "COMPLETED";
+};
+
+const listCandidateRecords = (
+  records: CandidateRecord[],
+  options: CandidateListOptions
+): CandidateListResult => {
+  const status = normalizeListStatus(options.status);
+  const query = String(options.query || "").trim().toLowerCase();
+  const page = normalizePositiveInt(options.page, 1);
+  const limit = Math.min(normalizePositiveInt(options.limit, 25), 100);
+  const sortBy = normalizeSortBy(options.sortBy);
+  const sortDir = normalizeSortDir(options.sortDir);
+  const queryFiltered = records.filter((item) => matchesCandidateQuery(item, query));
+  const statusCounts = {
+    active: queryFiltered.filter((item) => item.status === "ACTIVE").length,
+    deleted: queryFiltered.filter((item) => item.status === "DELETED").length
+  };
+  const statusFiltered = queryFiltered.filter((item) => {
+    if (status === "ACTIVE") return item.status === "ACTIVE";
+    if (status === "DELETED") return item.status === "DELETED";
+    return item.status === "ACTIVE" || item.status === "DELETED";
+  });
+  const sorted = [...statusFiltered].sort((a, b) => compareCandidateValues(a, b, sortBy, sortDir));
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * limit;
+
+  return {
+    rows: sorted.slice(start, start + limit).map((item) => ({ ...item })),
+    page: safePage,
+    limit,
+    total,
+    totalPages,
+    statusCounts
+  };
 };
 
 const normalizeListStatus = (value: unknown): "ACTIVE" | "DELETED" | "ALL" => {
@@ -718,6 +765,11 @@ const normalizeCandidateInput = (input: CandidateInput): CandidateInput => {
 
   return {
     ...input,
+    ownerUserId: normalizeOwnershipId(input.ownerUserId ?? input.parsedData?.uploadedByUserId),
+    uploadedByUserId: normalizeOwnershipId(input.uploadedByUserId ?? input.parsedData?.uploadedByUserId),
+    assignedRecruiterId: normalizeOwnershipId(
+      input.assignedRecruiterId ?? input.ownerUserId ?? input.parsedData?.uploadedByUserId
+    ),
     name: sanitizeLine(normalized.fullName || input.name || "Unknown Candidate", 90) || "Unknown Candidate",
     email: normalizeEmail(normalized.email || input.email || ""),
     phone: sanitizeLine(normalized.phone || input.phone || "", 24),
@@ -743,3 +795,8 @@ const splitEducation = (value: string): string[] =>
     .split(/[|,;/]+/g)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const normalizeOwnershipId = (value: unknown): string | null => {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+};

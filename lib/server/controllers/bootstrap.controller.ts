@@ -4,6 +4,7 @@ import { AppError } from "../middleware/error.middleware";
 import { canSyncAppState, scopeAppStatePayloadForRole } from "../services/app-state-access.service";
 import { appStateStoreService } from "../services/app-state-store.service";
 import { isFounderRole, type AuthUser } from "../services/auth.service";
+import { authorizationService } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import type { CandidateRecord } from "../types/candidate";
 import { AppStateStorePayload } from "../types/app-state";
@@ -14,8 +15,7 @@ export const getBootstrapState = async (req: Request, res: Response): Promise<vo
     throw new AppError("Unauthorized", 401);
   }
 
-  const allCandidates = await candidateStoreService.getAllCandidates();
-  const data = await buildBootstrapSnapshot(authUser, allCandidates);
+  const data = await buildBootstrapSnapshot(authUser);
 
   res.status(200).json({
     success: true,
@@ -47,7 +47,10 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
     throw new AppError("This account has read-only ATS access", 403);
   }
 
-  const payload = scopeAppStatePayloadForRole(requestedPayload, authUser.role);
+  const context = await authorizationService.createContext(authUser);
+  const permittedCandidates = await candidateStoreService.getCandidatesForContext(context);
+  const roleScopedPayload = scopeAppStatePayloadForRole(requestedPayload, authUser.role);
+  const payload = authorizationService.scopeSyncPayload(context, roleScopedPayload, permittedCandidates);
 
   if (!isFounderRole(authUser.role) && requestedBulkUpload) {
     await appStateStoreService.updateBulkUploadForUser(authUser.id, requestedBulkUpload);
@@ -55,8 +58,7 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
 
   await appStateStoreService.updateState(payload);
 
-  const allCandidates = await candidateStoreService.getAllCandidates();
-  const data = await buildBootstrapSnapshot(authUser, allCandidates);
+  const data = await buildBootstrapSnapshot(authUser);
 
   res.status(200).json({
     success: true,
@@ -69,17 +71,14 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
   });
 };
 
-const buildBootstrapSnapshot = async (
-  authUser: AuthUser,
-  allCandidates: CandidateRecord[]
-) => {
+const buildBootstrapSnapshot = async (authUser: AuthUser) => {
   const founder = isFounderRole(authUser.role);
-  const candidates = founder
-    ? allCandidates
-    : allCandidates.filter((candidate) => isCandidateAssignedToUser(authUser, candidate));
-  const data = await appStateStoreService.getSnapshot(candidates, {
+  const context = await authorizationService.createContext(authUser);
+  const candidates = await candidateStoreService.getCandidatesForContext(context);
+  const snapshot = await appStateStoreService.getSnapshot(candidates, {
     bulkUploadOwnerId: founder ? undefined : authUser.id
   });
+  const data = authorizationService.scopeAppState(context, snapshot);
 
   if (!founder) {
     data.bulkUpload = includeOwnedUploadCandidates(data.bulkUpload, candidates, authUser);
@@ -113,16 +112,6 @@ const isCandidateFromBulkUpload = (candidate: CandidateRecord, authUser: AuthUse
   if (uploadedByUserId && uploadedByUserId === authUser.id) return true;
   return /(?:csv|resume|bulk) upload/i.test(candidate.source);
 };
-
-const isCandidateAssignedToUser = (authUser: AuthUser, candidate: CandidateRecord): boolean => {
-  const recruiter = normalizePersonKey(candidate.recruiter);
-  return Boolean(
-    recruiter &&
-    (recruiter === normalizePersonKey(authUser.name) || recruiter === normalizePersonKey(authUser.email))
-  );
-};
-
-const normalizePersonKey = (value: unknown): string => String(value || "").trim().toLowerCase();
 
 const toOptionalObject = (value: unknown): Record<string, unknown> | undefined => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;

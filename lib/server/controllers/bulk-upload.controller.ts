@@ -25,24 +25,34 @@ export const parseBulkUpload = async (req: Request, res: Response): Promise<void
     name: authUser.name,
     email: authUser.email
   });
+  const safeResponse = isFounderRole(authUser.role)
+    ? response
+    : {
+        ...response,
+        blockedDuplicates: response.blockedDuplicates.map((duplicate) => ({
+          ...duplicate,
+          matchedCandidateIds: []
+        })),
+        duplicates: []
+      };
 
   if (!isFounderRole(authUser.role)) {
     await appStateStoreService.recordBulkUploadForUser(authUser.id, {
-      totalFiles: response.summary.totalFiles,
-      pending: response.summary.pending,
-      completed: response.summary.completed,
-      failed: response.summary.failed,
-      blockedCount: response.summary.duplicateCandidates,
+      totalFiles: safeResponse.summary.totalFiles,
+      pending: safeResponse.summary.pending,
+      completed: safeResponse.summary.completed,
+      failed: safeResponse.summary.failed,
+      blockedCount: safeResponse.summary.duplicateCandidates,
       lastRunAt: new Date().toISOString(),
-      results: response.results,
-      blockedDuplicates: response.blockedDuplicates,
-      duplicates: response.duplicates,
-      candidateNotes: response.addedCandidates
+      results: safeResponse.results,
+      blockedDuplicates: safeResponse.blockedDuplicates,
+      duplicates: safeResponse.duplicates,
+      candidateNotes: safeResponse.addedCandidates
     });
   }
 
   res.status(200).json({
     success: true,
-    ...response
+    ...safeResponse
   });
 };

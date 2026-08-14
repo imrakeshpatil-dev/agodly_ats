@@ -4,7 +4,8 @@ import path from "path";
 
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
-import { AuthUser, isFounderRole } from "../services/auth.service";
+import { isFounderRole } from "../services/auth.service";
+import { authorizationService, type AuthorizationContext } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
 import {
@@ -19,15 +20,17 @@ import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 
 export const listPendingDuplicates = async (req: Request, res: Response): Promise<void> => {
-  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
-  if (!authUser) {
-    throw new AppError("Unauthorized", 401);
-  }
-
+  const context = await getAuthorizationContext(req);
   const duplicates = await bulkUploadService.listPendingDuplicates();
-  const scopedDuplicates = isFounderRole(authUser.role)
-    ? duplicates
-    : duplicates.filter((group) => isCandidateAssignedToUser(authUser, group.duplicateCandidate));
+  const scopedDuplicates = duplicates
+    .filter((group) => authorizationService.canViewCandidate(context, group.duplicateCandidate))
+    .map((group) => ({
+      ...group,
+      matchedCandidates: group.matchedCandidates.filter((candidate) =>
+        authorizationService.canViewCandidate(context, candidate)
+      )
+    }))
+    .filter((group) => group.matchedCandidates.length > 0);
 
   res.status(200).json({
     success: true,
@@ -43,42 +46,8 @@ export const listCandidates = async (req: Request, res: Response): Promise<void>
   const limit = parsePositiveInt(req.query.limit, 25);
   const sortBy = String(req.query.sortBy || "createdAt").trim();
   const sortDir = String(req.query.sortDir || "desc").trim().toLowerCase() === "asc" ? "asc" : "desc";
-  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
-
-  if (authUser && !isFounderRole(authUser.role)) {
-    const allCandidates = await candidateStoreService.getAllCandidates();
-    const scopedCandidates = allCandidates.filter((candidate) => canAuthUserAccessCandidate(authUser, candidate));
-    const queryFiltered = scopedCandidates.filter((candidate) => matchesCandidateSearch(candidate, query));
-    const statusCounts = {
-      active: queryFiltered.filter((candidate) => candidate.status === "ACTIVE").length,
-      deleted: queryFiltered.filter((candidate) => candidate.status === "DELETED").length
-    };
-    const statusFiltered = queryFiltered.filter((candidate) => {
-      if (status === "ACTIVE") return candidate.status === "ACTIVE";
-      if (status === "DELETED") return candidate.status === "DELETED";
-      return candidate.status === "ACTIVE" || candidate.status === "DELETED";
-    });
-    const sorted = [...statusFiltered].sort((a, b) => compareCandidateForApi(a, b, sortBy, sortDir));
-    const total = sorted.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage = Math.min(page, totalPages);
-    const start = (safePage - 1) * limit;
-
-    res.status(200).json({
-      success: true,
-      data: {
-        rows: sorted.slice(start, start + limit),
-        page: safePage,
-        limit,
-        total,
-        totalPages,
-        statusCounts
-      }
-    });
-    return;
-  }
-
-  const result = await candidateStoreService.listCandidates({
+  const context = await getAuthorizationContext(req);
+  const result = await candidateStoreService.listCandidatesForContext(context, {
     status,
     query,
     page,
@@ -100,12 +69,23 @@ export const createCandidate = async (req: Request, res: Response): Promise<void
     throw new AppError("Viewer access is read-only and cannot create candidates", 403);
   }
   const requestedRecruiter = toOptionalString(body.recruiter);
-  const recruiter = authUser && !isFounderRole(authUser.role)
+  if (!authUser) throw new AppError("Unauthorized", 401);
+  const context = await authorizationService.createContext(authUser);
+  const requestedOwnerUserId = toOptionalString(body.ownerUserId) || toOptionalString(body.assignedRecruiterId);
+  const ownerUserId = isFounderRole(authUser.role)
+    ? requestedOwnerUserId || authUser.id
+    : authorizationService.canAssignCandidateOwner(context, requestedOwnerUserId || authUser.id)
+      ? requestedOwnerUserId || authUser.id
+      : authUser.id;
+  const recruiter = !isFounderRole(authUser.role)
     ? authUser.name || authUser.email || "Unassigned"
     : requestedRecruiter || authUser?.name || authUser?.email || "Unassigned";
   const now = new Date().toISOString();
 
   const candidateInput: CandidateInput = {
+    ownerUserId,
+    uploadedByUserId: authUser.id,
+    assignedRecruiterId: ownerUserId,
     name: toOptionalString(body.name) || "Unknown Candidate",
     email: toOptionalString(body.email) || "",
     phone: toOptionalString(body.phone) || "",
@@ -136,31 +116,37 @@ export const createCandidate = async (req: Request, res: Response): Promise<void
     throw new AppError("Candidate name is required", 400);
   }
 
-  const allowDuplicate = Boolean(body.allowDuplicate);
   const matches = await candidateStoreService.findPotentialMatches(candidateInput);
-  if (matches.length && !allowDuplicate) {
+  if (matches.length) {
     res.status(409).json({
       success: false,
       error: {
         message: "Potential duplicate candidate found",
         code: "DUPLICATE_CANDIDATE"
       },
-      duplicates: matches
+      duplicates: isFounderRole(authUser.role) ? matches : []
     });
     return;
   }
 
-  const candidate = await candidateStoreService.addActiveCandidate(candidateInput);
+  const uniqueResult = await candidateStoreService.addActiveCandidateIfUnique(candidateInput);
+  if (!uniqueResult.candidate) {
+    res.status(409).json({
+      success: false,
+      error: {
+        message: "Potential duplicate candidate found",
+        code: "DUPLICATE_CANDIDATE"
+      },
+      duplicates: isFounderRole(authUser.role) ? uniqueResult.matches : []
+    });
+    return;
+  }
+  const candidate = uniqueResult.candidate;
 
   res.status(201).json({
     success: true,
     candidate,
-    duplicateWarning: matches.length
-      ? {
-          count: matches.length,
-          matches
-        }
-      : null
+    duplicateWarning: null
   });
 };
 
@@ -170,11 +156,8 @@ export const getCandidate = async (req: Request, res: Response): Promise<void> =
     throw new AppError("Candidate id is required", 400);
   }
 
-  const candidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!candidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanAccessCandidate(req, candidate);
+  const context = await getAuthorizationContext(req);
+  const candidate = await getCandidateOrDeny(req, context, candidateId, "candidate-read");
 
   res.status(200).json({
     success: true,
@@ -188,11 +171,8 @@ export const downloadCandidateResume = async (req: Request, res: Response): Prom
     throw new AppError("Candidate id is required", 400);
   }
 
-  const candidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!candidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanAccessCandidate(req, candidate);
+  const context = await getAuthorizationContext(req);
+  const candidate = await getCandidateOrDeny(req, context, candidateId, "candidate-resume");
 
   const resumeUrl = String(candidate.resumeUrl || "").trim();
   if (!resumeUrl) {
@@ -224,13 +204,11 @@ export const mergeDuplicate = async (req: Request, res: Response): Promise<void>
     throw new AppError("primaryCandidateId and duplicateCandidateId are required", 400);
   }
 
-  const primaryCandidate = await candidateStoreService.getCandidateById(primaryCandidateId);
-  const duplicateCandidate = await candidateStoreService.getCandidateById(duplicateCandidateId);
-  if (!primaryCandidate || !duplicateCandidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, primaryCandidate);
-  assertCanMutateCandidate(req, duplicateCandidate);
+  const context = await getAuthorizationContext(req);
+  const primaryCandidate = await getCandidateOrDeny(req, context, primaryCandidateId, "candidate-merge");
+  const duplicateCandidate = await getCandidateOrDeny(req, context, duplicateCandidateId, "candidate-merge");
+  await assertCanMutateCandidate(req, primaryCandidate);
+  await assertCanMutateCandidate(req, duplicateCandidate);
 
   const mergedCandidate = await bulkUploadService.mergeDuplicate(primaryCandidateId, duplicateCandidateId);
 
@@ -246,11 +224,9 @@ export const ignoreDuplicate = async (req: Request, res: Response): Promise<void
     throw new AppError("Duplicate candidate id is required", 400);
   }
 
-  const duplicateCandidate = await candidateStoreService.getCandidateById(duplicateCandidateId);
-  if (!duplicateCandidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, duplicateCandidate);
+  const context = await getAuthorizationContext(req);
+  const duplicateCandidate = await getCandidateOrDeny(req, context, duplicateCandidateId, "candidate-duplicate-ignore");
+  await assertCanMutateCandidate(req, duplicateCandidate);
 
   const ignoredCandidate = await bulkUploadService.ignoreDuplicate(duplicateCandidateId);
 
@@ -269,6 +245,8 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
   const body = (req.body || {}) as Record<string, unknown>;
 
   const patch: CandidateProfileUpdate = {
+    ownerUserId: toOptionalNullableString(body.ownerUserId),
+    assignedRecruiterId: toOptionalNullableString(body.assignedRecruiterId),
     name: toOptionalString(body.name),
     email: toOptionalString(body.email),
     phone: toOptionalString(body.phone),
@@ -300,14 +278,28 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
     throw new AppError("At least one profile field is required", 400);
   }
 
-  const existingCandidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!existingCandidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, existingCandidate);
+  const accessContext = await getAuthorizationContext(req);
+  const existingCandidate = await getCandidateOrDeny(req, accessContext, candidateId, "candidate-update");
+  const context = await assertCanMutateCandidate(req, existingCandidate);
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
-  if (authUser && !isFounderRole(authUser.role) && patch.recruiter && normalizePersonKey(patch.recruiter) !== normalizePersonKey(existingCandidate.recruiter)) {
-    throw new AppError("Only CEO, Managing Director, or Admin can reassign candidate ownership", 403);
+  const targetOwnerId = patch.assignedRecruiterId ?? patch.ownerUserId;
+  const changesOwnership =
+    (patch.ownerUserId !== undefined && normalizeIdentity(patch.ownerUserId) !== normalizeIdentity(existingCandidate.ownerUserId)) ||
+    (patch.assignedRecruiterId !== undefined && normalizeIdentity(patch.assignedRecruiterId) !== normalizeIdentity(existingCandidate.assignedRecruiterId)) ||
+    (patch.recruiter !== undefined && normalizeIdentity(patch.recruiter) !== normalizeIdentity(existingCandidate.recruiter));
+  if (changesOwnership && authUser?.role === "Recruiter") {
+    await denyCandidateAccess(req, existingCandidate, "candidate-ownership-change");
+  }
+  if (changesOwnership && !authorizationService.canAssignCandidateOwner(context, targetOwnerId || existingCandidate.ownerUserId)) {
+    await denyCandidateAccess(req, existingCandidate, "candidate-ownership-change");
+  }
+  if (changesOwnership && authUser) {
+    void authorizationService.logSecurityEvent({
+      userId: authUser.id,
+      endpoint: requestEndpoint(req),
+      entityType: "candidate-ownership-change",
+      entityId: existingCandidate.id
+    });
   }
 
   const candidate = await candidateStoreService.updateCandidateProfile(candidateId, patch);
@@ -329,11 +321,9 @@ export const softDeleteCandidate = async (req: Request, res: Response): Promise<
     throw new AppError('confirmationToken must be "DELETE"', 400);
   }
 
-  const existingCandidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!existingCandidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, existingCandidate);
+  const context = await getAuthorizationContext(req);
+  const existingCandidate = await getCandidateOrDeny(req, context, candidateId, "candidate-delete");
+  await assertCanMutateCandidate(req, existingCandidate);
 
   const candidate = await candidateStoreService.softDeleteCandidate(candidateId);
 
@@ -349,11 +339,9 @@ export const restoreCandidate = async (req: Request, res: Response): Promise<voi
     throw new AppError("Candidate id is required", 400);
   }
 
-  const existingCandidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!existingCandidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, existingCandidate);
+  const context = await getAuthorizationContext(req);
+  const existingCandidate = await getCandidateOrDeny(req, context, candidateId, "candidate-restore");
+  await assertCanMutateCandidate(req, existingCandidate);
 
   const candidate = await candidateStoreService.restoreCandidate(candidateId);
 
@@ -369,11 +357,9 @@ export const reparseCandidateWithAI = async (req: Request, res: Response): Promi
     throw new AppError("Candidate id is required", 400);
   }
 
-  const candidate = await candidateStoreService.getCandidateById(candidateId);
-  if (!candidate) {
-    throw new AppError("Candidate not found", 404);
-  }
-  assertCanMutateCandidate(req, candidate);
+  const context = await getAuthorizationContext(req);
+  const candidate = await getCandidateOrDeny(req, context, candidateId, "candidate-ai-reparse");
+  await assertCanMutateCandidate(req, candidate);
 
   const resumeText = await resolveCandidateResumeText(candidate);
   if (!resumeText) {
@@ -401,10 +387,11 @@ export const reparseCandidatesBatchWithAI = async (req: Request, res: Response):
   const limit = Math.min(Math.max(parsePositiveInt(req.body?.limit, 25), 1), 200);
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
 
-  const all = await candidateStoreService.getAllCandidates();
-  const accessible = authUser && !isFounderRole(authUser.role)
-    ? all.filter((candidate) => canAuthUserAccessCandidate(authUser, candidate) && canAuthUserMutateCandidate(authUser, candidate))
-    : all;
+  if (!authUser) throw new AppError("Unauthorized", 401);
+  const context = await authorizationService.createContext(authUser);
+  const accessible = (await candidateStoreService.getCandidatesForContext(context)).filter((candidate) =>
+    authorizationService.canEditCandidate(context, candidate)
+  );
   const pool = candidateIds.length
     ? accessible.filter((candidate) => candidateIds.includes(candidate.id))
     : accessible.filter((candidate) => (onlyFailed ? candidate.parsingStatus === "FAILED" : candidate.status === "ACTIVE"));
@@ -463,6 +450,14 @@ const toOptionalString = (value: unknown): string | undefined => {
   if (value === undefined || value === null) return undefined;
   return String(value);
 };
+
+const toOptionalNullableString = (value: unknown): string | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || String(value).trim() === "") return null;
+  return String(value).trim();
+};
+
+const normalizeIdentity = (value: unknown): string => String(value || "").trim().toLowerCase();
 
 const toOptionalStringArray = (value: unknown): string[] | undefined => {
   if (value === undefined || value === null) return undefined;
@@ -525,87 +520,70 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
   return Math.floor(parsed);
 };
 
-const assertCanAccessCandidate = (req: Request, candidate: CandidateRecord): void => {
+const getAuthorizationContext = async (req: Request): Promise<AuthorizationContext> => {
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
-  if (!authUser || canAuthUserAccessCandidate(authUser, candidate)) return;
+  if (!authUser) throw new AppError("Unauthorized", 401);
+  return authorizationService.createContext(authUser);
+};
+
+const assertCanMutateCandidate = async (
+  req: Request,
+  candidate: CandidateRecord
+): Promise<AuthorizationContext> => {
+  const context = await getAuthorizationContext(req);
+  if (authorizationService.canEditCandidate(context, candidate)) return context;
+  return denyCandidateAccess(req, candidate, "candidate-edit");
+};
+
+const denyCandidateAccess = async (
+  req: Request,
+  candidate: CandidateRecord,
+  entityType: string
+): Promise<never> => {
+  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
+  if (authUser) {
+    await authorizationService.logUnauthorizedAccess({
+      userId: authUser.id,
+      endpoint: requestEndpoint(req),
+      entityType,
+      entityId: candidate.id
+    });
+  }
   throw new AppError("You do not have access to this candidate", 403);
 };
 
-const assertCanMutateCandidate = (req: Request, candidate: CandidateRecord): void => {
+const getCandidateOrDeny = async (
+  req: Request,
+  context: AuthorizationContext,
+  candidateId: string,
+  entityType: string
+): Promise<CandidateRecord> => {
+  const candidate = await candidateStoreService.getCandidateForContext(context, candidateId);
+  if (!candidate) return denyCandidateLookup(req, candidateId, entityType);
+  return candidate;
+};
+
+const denyCandidateLookup = async (
+  req: Request,
+  candidateId: string,
+  entityType: string
+): Promise<never> => {
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
-  if (!authUser) {
-    throw new AppError("Unauthorized", 401);
+  if (authUser) {
+    await authorizationService.logUnauthorizedAccess({
+      userId: authUser.id,
+      endpoint: requestEndpoint(req),
+      entityType,
+      entityId: candidateId
+    });
   }
-
-  if (canAuthUserMutateCandidate(authUser, candidate)) return;
-  throw new AppError("You can only update candidates assigned to you unless you are CEO, Managing Director, or Admin", 403);
+  throw new AppError("Candidate not found", 404);
 };
 
-const canAuthUserMutateCandidate = (user: AuthUser, candidate: CandidateRecord): boolean => {
-  if (isFounderRole(user.role)) return true;
-  if (user.role === "Viewer") return false;
-  return isCandidateAssignedToUser(user, candidate);
-};
-
-const canAuthUserAccessCandidate = (user: AuthUser, candidate: CandidateRecord): boolean => {
-  if (isFounderRole(user.role)) return true;
-  return isCandidateAssignedToUser(user, candidate);
-};
-
-const isCandidateAssignedToUser = (user: AuthUser, candidate: CandidateRecord): boolean => {
-  const recruiterKey = normalizePersonKey(candidate.recruiter);
-  const userNameKey = normalizePersonKey(user.name);
-  const userEmailKey = normalizePersonKey(user.email);
-  return Boolean(recruiterKey && (recruiterKey === userNameKey || recruiterKey === userEmailKey));
-};
-
-const normalizePersonKey = (value: unknown): string => String(value || "").trim().toLowerCase();
-
-const matchesCandidateSearch = (candidate: CandidateRecord, query: string): boolean => {
-  const cleanQuery = String(query || "").trim().toLowerCase();
-  if (!cleanQuery) return true;
-  return [
-    candidate.name,
-    candidate.email,
-    candidate.phone,
-    candidate.currentRole,
-    candidate.currentCompany,
-    candidate.location,
-    candidate.education,
-    candidate.source,
-    candidate.recruiter,
-    ...(candidate.skills || []),
-    ...(candidate.keywords || [])
-  ]
-    .join(" ")
-    .toLowerCase()
-    .includes(cleanQuery);
-};
-
-const compareCandidateForApi = (a: CandidateRecord, b: CandidateRecord, sortBy: string, sortDir: "asc" | "desc"): number => {
-  const direction = sortDir === "asc" ? 1 : -1;
-  const left = getCandidateSortValue(a, sortBy);
-  const right = getCandidateSortValue(b, sortBy);
-
-  if (typeof left === "number" && typeof right === "number") {
-    return (left - right) * direction;
-  }
-
-  return String(left).localeCompare(String(right)) * direction;
-};
-
-const getCandidateSortValue = (candidate: CandidateRecord, sortBy: string): string | number => {
-  if (sortBy === "experienceYears") return Number(candidate.experienceYears || 0);
-  if (sortBy === "updatedAt") return candidate.updatedAt || "";
-  if (sortBy === "name") return candidate.name || "";
-  if (sortBy === "currentRole") return candidate.currentRole || "";
-  if (sortBy === "location") return candidate.location || "";
-  if (sortBy === "stage") return candidate.stage || "";
-  if (sortBy === "source") return candidate.source || "";
-  if (sortBy === "recruiter") return candidate.recruiter || "";
-  if (sortBy === "email") return candidate.email || "";
-  return candidate.createdAt || "";
-};
+const requestEndpoint = (req: Request): string =>
+  String((req as Request & { originalUrl?: string; path?: string }).originalUrl ||
+    (req as Request & { path?: string }).path ||
+    "candidate-api");
 
 const resolveCandidateResumeText = async (candidate: CandidateRecord): Promise<string> => {
   const parsedData = candidate.parsedData || {};
