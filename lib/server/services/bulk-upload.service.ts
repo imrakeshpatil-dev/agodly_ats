@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 
 import { CandidateInput, BulkUploadResponse, CandidateRecord, UploadFileResult } from "../types/candidate";
+import { attributeCandidateToUploader, BulkUploadActor } from "../utils/bulk-upload-attribution";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 import { candidateStoreService } from "./candidate-store.service";
 import { cvParserService } from "./cv-parser.service";
@@ -9,7 +10,7 @@ import { cvParserService } from "./cv-parser.service";
 export class BulkUploadService {
   private readonly resumeDir = resolveRuntimeDataPath("resumes");
 
-  async processFiles(files: Express.Multer.File[]): Promise<BulkUploadResponse> {
+  async processFiles(files: Express.Multer.File[], actor: BulkUploadActor): Promise<BulkUploadResponse> {
     const summary: BulkUploadResponse["summary"] = {
       totalFiles: files.length,
       pending: files.length,
@@ -50,7 +51,7 @@ export class BulkUploadService {
             parserModes.add(parserMode);
           }
 
-          const candidateInput: CandidateInput = {
+          const candidateInput = attributeCandidateToUploader({
             ...parsedCandidate,
             resumeUrl: originalResume?.resumeUrl || parsedCandidate.resumeUrl || "",
             source: parsedCandidate.source?.trim() || buildSourceLabel(extension, file.originalname),
@@ -68,10 +69,9 @@ export class BulkUploadService {
                   }
                 : undefined,
               uploadFileName: file.originalname,
-              uploadFileType: extension.toUpperCase(),
-              uploadedAt: new Date().toISOString()
+              uploadFileType: extension.toUpperCase()
             }
-          };
+          }, actor);
 
           const matches = await candidateStoreService.findPotentialMatches(candidateInput);
 

@@ -7730,22 +7730,42 @@ function processParsedCandidates(parsedCandidates, createdCandidates, duplicateG
   let duplicateCount = 0;
 
   parsedCandidates.forEach((candidate) => {
-    const matches = findLocalDuplicateMatches(candidate, [...state.candidates, ...createdCandidates]);
+    const attributedCandidate = attributeLocalBulkUploadCandidate(candidate);
+    const matches = findLocalDuplicateMatches(attributedCandidate, [...state.candidates, ...createdCandidates]);
     if (matches.length) {
       duplicateCount += 1;
       duplicateGroups.push({
-        duplicateCandidate: candidate,
+        duplicateCandidate: attributedCandidate,
         matchedCandidates: matches,
         reason: buildDuplicateReasonLocal(candidate, matches)
       });
       return;
     }
 
-    createdCandidates.push(candidate);
+    createdCandidates.push(attributedCandidate);
     addedCount += 1;
   });
 
   return { addedCount, duplicateCount };
+}
+
+function attributeLocalBulkUploadCandidate(candidate) {
+  const currentUser = getCurrentUser();
+  const uploaderName = String(currentUser?.name || "").trim() || String(currentUser?.email || "").trim() || "Unknown User";
+  const parsedData = candidate?.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? candidate.parsedData
+    : {};
+
+  return {
+    ...candidate,
+    recruiter: uploaderName,
+    parsedData: {
+      ...parsedData,
+      uploadedBy: uploaderName,
+      uploadedByUserId: currentUser?.id || "",
+      uploadedAt: new Date().toISOString()
+    }
+  };
 }
 
 function readFileAsText(file) {

@@ -2,6 +2,11 @@ import { promises as fs } from "fs";
 import path from "path";
 
 import { AppError } from "../middleware/error.middleware";
+import {
+  attributeCandidateToUploader,
+  BulkUploadActor,
+  resolveBulkUploadActorName
+} from "../utils/bulk-upload-attribution";
 import { candidateStoreService } from "./candidate-store.service";
 import { classifyResumeAIError, parseResumeWithAIResult } from "./resumeAIParser";
 import { extractTextFromDOCX, extractTextFromPDF } from "./resumeTextExtractor";
@@ -17,7 +22,7 @@ interface ResumeProcessResponse {
 class ResumeProcessingService {
   private readonly resumeDir = resolveRuntimeDataPath("resumes");
 
-  async processUploadedResume(file: Express.Multer.File): Promise<ResumeProcessResponse> {
+  async processUploadedResume(file: Express.Multer.File, actor: BulkUploadActor): Promise<ResumeProcessResponse> {
     if (!file) {
       throw new AppError("Resume file is required", 400);
     }
@@ -35,12 +40,14 @@ class ResumeProcessingService {
 
     const resumeUrl = toPosixPath(path.relative(process.cwd(), storedPath));
     const placeholderName = deriveNameFromFilename(file.originalname);
+    const uploadedAt = new Date().toISOString();
+    const uploaderName = resolveBulkUploadActorName(actor);
 
-    const pendingCandidate = await candidateStoreService.addActiveCandidate({
+    const pendingCandidate = await candidateStoreService.addActiveCandidate(attributeCandidateToUploader({
       name: placeholderName || "Unknown Candidate",
       email: "",
       phone: "",
-      recruiter: "Bulk Upload",
+      recruiter: uploaderName,
       stage: "Identified",
       jobId: "",
       currentRole: "",
@@ -61,13 +68,25 @@ class ResumeProcessingService {
           mimeType: file.mimetype || "",
           sizeBytes: file.size || file.buffer.length
         },
-        uploadedAt: new Date().toISOString()
+        uploadedAt
       },
       parsingStatus: "PENDING",
       source: "Resume Upload"
-    });
+    }, actor, uploadedAt));
 
-    void this.runAsyncParsing(pendingCandidate.id, storedPath, extension, resumeUrl, file.originalname || storedFileName, storedFileName);
+    void this.runAsyncParsing(
+      pendingCandidate.id,
+      storedPath,
+      extension,
+      resumeUrl,
+      file.originalname || storedFileName,
+      storedFileName,
+      {
+        uploadedBy: uploaderName,
+        uploadedByUserId: actor.id,
+        uploadedAt
+      }
+    );
 
     return {
       status: "processing",
@@ -81,7 +100,8 @@ class ResumeProcessingService {
     extension: ".pdf" | ".docx",
     resumeUrl: string,
     originalFileName: string,
-    storedFileName: string
+    storedFileName: string,
+    uploadAttribution: { uploadedBy: string; uploadedByUserId: string; uploadedAt: string }
   ): Promise<void> {
     let resumeText = "";
     try {
@@ -109,6 +129,7 @@ class ResumeProcessingService {
         keywords,
         resumeUrl,
         parsedData: {
+          ...uploadAttribution,
           parser: "AI",
           ...aiResult.metadata,
           ...normalized,
@@ -153,6 +174,7 @@ class ResumeProcessingService {
             parsingStatus: "COMPLETED",
             source: "Resume Upload (Heuristic Fallback)",
             parsedData: {
+              ...uploadAttribution,
               ...fallback,
               parser: "HEURISTIC_FALLBACK",
               mode: "HEURISTIC_FALLBACK",
@@ -178,6 +200,7 @@ class ResumeProcessingService {
         resumeUrl,
         parsingStatus: "FAILED",
         parsedData: {
+          ...uploadAttribution,
           errorCategory,
           mode: "HEURISTIC_FALLBACK",
           provider: "none",
