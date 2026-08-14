@@ -129,11 +129,7 @@ jobs:
             node -e 'const D=require("better-sqlite3"),db=new D(String(process.env.DATABASE_URL||"").replace(/^file:/,""),{readonly:true,fileMustExist:true}),read=k=>{const r=db.prepare("SELECT value FROM RuntimeState WHERE key = ?").get(k);return r?JSON.parse(Buffer.isBuffer(r.value)?r.value.toString("utf8"):String(r.value)):{}},c=read("candidate-store").candidates||[],a=read("app-state");console.log(JSON.stringify({activeCandidates:c.filter(x=>x.status!=="DELETED").length,totalCandidates:c.length,jobs:Array.isArray(a.jobs)?a.jobs.length:0,clients:Array.isArray(a.clients)?a.clients.length:0,capturedAt:new Date().toISOString()},null,2));db.close()' > "$release_dir/data-counts.json"
             echo "DATA_COUNTS_PASS"
             echo ">> Nginx configuration (when readable)"
-            if command -v nginx >/dev/null 2>&1 && nginx -T > "$release_dir/nginx-config.txt" 2>&1; then
-              chmod 600 "$release_dir/nginx-config.txt"
-            else
-              rm -f "$release_dir/nginx-config.txt"
-            fi
+            (command -v nginx >/dev/null 2>&1 && nginx -T > "$release_dir/nginx-config.txt" 2>&1 && chmod 600 "$release_dir/nginx-config.txt") || rm -f "$release_dir/nginx-config.txt"
             echo ">> Backup checksums"
             find "$release_dir" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$release_dir/SHA256SUMS"
             (cd "$release_dir" && sha256sum -c SHA256SUMS)
