@@ -21,7 +21,7 @@
     "prisma:migrate:deploy": "npm run db:ensure && prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "deploy:check": "npm run prisma:generate && npm run typecheck && npm run prisma:validate && npm run build",
-    "release:check": "npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build"
+    "release:check": "npm run prisma:generate && npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.8.0",
