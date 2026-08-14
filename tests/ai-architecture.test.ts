@@ -17,6 +17,20 @@ test("MY LLM and AI Match use the configured provider abstraction", async () => 
   assert.match(tools, /heuristicRanked/);
   assert.doesNotMatch(agent, /new OpenAI|OPENAI_API_KEY/);
   assert.doesNotMatch(tools, /new OpenAI/);
+  assert.match(agent, /isCandidateCountIntent/);
+  assert.match(agent, /countActiveCandidates/);
+  assert.match(tools, /There are \$\{count\} active candidate/);
+});
+
+test("diagnostics reads live RuntimeState-backed ATS counts and exposes safe AI errors", async () => {
+  const [health, browser] = await Promise.all([
+    read("lib/server/services/health.service.ts"),
+    read("app.js")
+  ]);
+  assert.match(health, /candidateStoreService\.getActiveCandidates\(\)/);
+  assert.match(health, /appStateStoreService\.getSnapshot\(candidates\)/);
+  assert.match(browser, /AI Error Category/);
+  assert.doesNotMatch(browser, /OPENAI_API_KEY/);
 });
 
 test("existing authenticated AI and resume API contracts remain present", async () => {

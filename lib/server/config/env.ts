@@ -2,7 +2,29 @@ import dotenv from "dotenv";
 
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 
-dotenv.config();
+const dotenvResult = dotenv.config();
+
+// Production AI settings are intentionally managed in the protected .env file.
+// Make those values authoritative over stale PM2 environment snapshots while
+// leaving unrelated process-manager settings (such as PORT) untouched.
+if ((process.env.NODE_ENV ?? dotenvResult.parsed?.NODE_ENV) === "production" && dotenvResult.parsed) {
+  for (const key of [
+    "AI_PROVIDER",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
+    "OPENROUTER_BASE_URL",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "AI_REQUEST_TIMEOUT_MS",
+    "AI_MAX_RETRIES",
+    "AI_MAX_OUTPUT_TOKENS",
+    "AI_RESUME_MAX_CHARS"
+  ]) {
+    if (dotenvResult.parsed[key] !== undefined) process.env[key] = dotenvResult.parsed[key];
+  }
+}
 
 const toNumber = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);

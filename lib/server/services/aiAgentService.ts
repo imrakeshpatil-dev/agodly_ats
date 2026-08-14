@@ -6,6 +6,7 @@ import {
   AIToolResponse,
   ATSheetQueryInput,
   CandidateSearchFilters,
+  countActiveCandidates,
   draftRecruiterMessage,
   generateInterviewQuestions,
   matchCandidatesToJob,
@@ -243,6 +244,25 @@ export const handleUserPrompt = async (prompt: string, conversationIdInput?: str
   const memoryContext = buildMemoryContext(relevantMemories);
   const directJobMatchIntent = parseJobMatchIntent(cleanPrompt);
   const directSearchIntent = parseSearchIntentFromPrompt(cleanPrompt);
+
+  if (isCandidateCountIntent(cleanPrompt)) {
+    const countOutput = await countActiveCandidates();
+    const interactionId = await aiMemoryService.recordInteraction({
+      prompt: cleanPrompt,
+      explanation: countOutput.explanation,
+      toolCalls: ["countActiveCandidates"],
+      results: countOutput.results,
+      conversationId: conversation.id
+    });
+
+    return {
+      explanation: countOutput.explanation,
+      results: countOutput.results,
+      toolCalls: ["countActiveCandidates"],
+      conversationId: conversation.id,
+      interactionId
+    };
+  }
 
   if (directJobMatchIntent) {
     const matchOutput = await matchCandidatesToJob(cleanPrompt);
@@ -601,6 +621,14 @@ const parseJobMatchIntent = (prompt: string): boolean => {
   const hasJobSignal = /\b(job|jd|job description|requirement|requirements)\b/i.test(lower);
   const hasSkillBlock = /\b(?:skills?|keywords?)\s*[:=-]/i.test(prompt);
   return (hasMatchSignal && hasJobSignal) || (hasJobSignal && hasSkillBlock);
+};
+
+const isCandidateCountIntent = (prompt: string): boolean => {
+  const text = String(prompt || "").trim();
+  return (
+    /\b(?:how many|count|total number of|number of)\b/i.test(text) &&
+    /\b(?:candidate|candidates|profiles|talent)\b/i.test(text)
+  );
 };
 
 const parseSearchIntentFromPrompt = (

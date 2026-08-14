@@ -441,6 +441,16 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
   };
 };
 
+export const countActiveCandidates = async (): Promise<AIToolResponse> => {
+  const candidates = await candidateStoreService.getActiveCandidates();
+  const count = candidates.length;
+
+  return {
+    explanation: `There are ${count} active candidate${count === 1 ? "" : "s"} in the ATS.`,
+    results: [{ metric: "activeCandidates", count }]
+  };
+};
+
 const rerankWithConfiguredProviderForJobMatch = async (input: {
   jobDescription: string;
   requiredTerms: string[];
