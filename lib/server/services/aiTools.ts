@@ -442,7 +442,9 @@ export const searchCandidates = async (filters: CandidateSearchFilters): Promise
 };
 
 export const countActiveCandidates = async (): Promise<AIToolResponse> => {
-  const candidates = await candidateStoreService.getActiveCandidates();
+  const candidates = (await candidateStoreService.getAllCandidates()).filter(
+    (candidate) => candidate.status !== "DELETED"
+  );
   const count = candidates.length;
 
   return {
