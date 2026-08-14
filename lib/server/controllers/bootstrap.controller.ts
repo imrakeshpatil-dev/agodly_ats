@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
 
 import { AppError } from "../middleware/error.middleware";
+import { canSyncAppState, scopeAppStatePayloadForRole } from "../services/app-state-access.service";
 import { appStateStoreService } from "../services/app-state-store.service";
+import type { AuthUser } from "../services/auth.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import { AppStateStorePayload } from "../types/app-state";
 
@@ -23,7 +25,7 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
 
   const ignoredCandidateRows = Array.isArray(body.candidates) ? body.candidates.length : 0;
 
-  const payload: AppStateStorePayload = {
+  const requestedPayload: AppStateStorePayload = {
     bulkUpload: toOptionalObject(body.bulkUpload),
     users: toOptionalRowArray(body.users),
     clients: toOptionalRowArray(body.clients),
@@ -32,6 +34,13 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
     placements: toOptionalRowArray(body.placements),
     activities: toOptionalRowArray(body.activities)
   };
+
+  const authUser = (req as Request & { authUser?: AuthUser }).authUser;
+  if (!authUser || !canSyncAppState(authUser.role)) {
+    throw new AppError("This account has read-only ATS access", 403);
+  }
+
+  const payload = scopeAppStatePayloadForRole(requestedPayload, authUser.role);
 
   await appStateStoreService.updateState(payload);
 
@@ -43,7 +52,8 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
     data,
     meta: {
       candidateCount: candidates.length,
-      candidateSyncMode: ignoredCandidateRows ? "ignored-browser-candidate-replacement" : "unchanged"
+      candidateSyncMode: ignoredCandidateRows ? "ignored-browser-candidate-replacement" : "unchanged",
+      syncedCollections: Object.keys(payload)
     }
   });
 };

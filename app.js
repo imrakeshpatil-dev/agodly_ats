@@ -42,6 +42,7 @@ const API_ROUTES = {
 const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "pdf", "doc", "docx"]);
 const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
+const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
 
 const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "Dropped"];
 const CLOSURE_TYPE_OPTIONS = ["FTE", "Contractual"];
@@ -386,6 +387,7 @@ const ui = {
   bootstrapError: "",
   backendSyncInFlight: false,
   backendSyncTimerId: 0,
+  sharedStateRefreshTimerId: 0,
   isHydratingFromBackend: false,
   duplicateSyncInFlight: false,
   lastDuplicateSyncAt: 0,
@@ -561,9 +563,17 @@ function initialize() {
   bindEvents();
   render();
   checkBackendHealth();
+  startSharedStateRefresh();
 }
 
 function bindEvents() {
+  window.addEventListener("focus", () => {
+    void refreshSharedStateFromBackendIfIdle();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void refreshSharedStateFromBackendIfIdle();
+  });
+
   el.sidebarToggle?.addEventListener("click", () => {
     el.layout?.classList.toggle("sidebar-collapsed");
   });
@@ -931,6 +941,11 @@ function onSectionClick(event) {
   }
 
   if (action === "create-client-inline") {
+    const role = normalizeUserRole(getCurrentUser()?.role);
+    if (!canCurrentUserAccessFounderWorkspace() && role !== "TA Manager") {
+      alert("Only founders and TA Managers can create clients.");
+      return;
+    }
     const name = prompt("Client name");
     if (!name || !name.trim()) return;
     const cleanName = name.trim();
@@ -2730,6 +2745,8 @@ function renderCreateJobSection() {
   const draft = ui.jobs.draft;
   const selectedLocations = Array.isArray(draft.locations) ? draft.locations : [];
   const jobType = normalizeJobType(draft.jobType);
+  const role = normalizeUserRole(getCurrentUser()?.role);
+  const canCreateClient = canCurrentUserAccessFounderWorkspace() || role === "TA Manager";
 
   return `
     <section class="panel">
@@ -2770,7 +2787,7 @@ function renderCreateJobSection() {
         <div class="dialog-field">
           <div class="jobs-inline-head">
             <span>Client</span>
-            <button class="jobs-link-btn" type="button" data-action="create-client-inline">Create New Client</button>
+            ${canCreateClient ? '<button class="jobs-link-btn" type="button" data-action="create-client-inline">Create New Client</button>' : ""}
           </div>
           <select data-action="job-client">
             <option value="">None</option>
@@ -7373,7 +7390,8 @@ function submitJobDraft(targetStatus) {
     ctcNotDisclosed: Boolean(draft.ctcNotDisclosed),
     requiredSkills: uniqueStringsLocal(draft.requiredSkills || []),
     preferredSkills: uniqueStringsLocal(draft.preferredSkills || []),
-    createdAt: todayISO()
+    createdAt: todayISO(),
+    updatedAt: new Date().toISOString()
   };
 
   const index = state.jobs.findIndex((item) => item.id === normalizedDraft.id);
@@ -8898,7 +8916,8 @@ async function onSubmitRecord(event) {
       ctcNotDisclosed: false,
       requiredSkills: uniqueStringsLocal(requiredSkills),
       preferredSkills: [],
-      createdAt: todayISO()
+      createdAt: todayISO(),
+      updatedAt: new Date().toISOString()
     };
 
     state.jobs.push(record);
@@ -9328,8 +9347,10 @@ async function checkBackendHealth() {
   await hydrateStateFromBackend();
 }
 
-async function hydrateStateFromBackend() {
+async function hydrateStateFromBackend(options = {}) {
   if (ui.isHydratingFromBackend) return;
+
+  const background = Boolean(options.background);
 
   try {
     ui.isHydratingFromBackend = true;
@@ -9350,12 +9371,38 @@ async function hydrateStateFromBackend() {
     render();
     ui.bootstrapLoaded = true;
   } catch (error) {
-    ui.bootstrapLoaded = false;
-    ui.bootstrapError = error instanceof Error ? error.message : "Unable to load dashboard data";
-    render();
+    if (!background || !ui.bootstrapLoaded) {
+      ui.bootstrapLoaded = false;
+      ui.bootstrapError = error instanceof Error ? error.message : "Unable to load dashboard data";
+      render();
+    }
   } finally {
     ui.isHydratingFromBackend = false;
   }
+}
+
+function startSharedStateRefresh() {
+  if (ui.sharedStateRefreshTimerId) return;
+
+  ui.sharedStateRefreshTimerId = window.setInterval(() => {
+    if (!document.hidden) void refreshSharedStateFromBackendIfIdle();
+  }, SHARED_STATE_REFRESH_INTERVAL_MS);
+}
+
+async function refreshSharedStateFromBackendIfIdle() {
+  if (
+    !ui.api.connected ||
+    !ui.bootstrapLoaded ||
+    !isAuthenticated() ||
+    ui.isHydratingFromBackend ||
+    ui.backendSyncInFlight ||
+    ui.backendSyncTimerId
+  ) {
+    return false;
+  }
+
+  await hydrateStateFromBackend({ background: true });
+  return true;
 }
 
 function scheduleBackendStateSync() {
@@ -9391,9 +9438,17 @@ async function syncStateToBackend(options = {}) {
       body: JSON.stringify(state)
     });
 
+    const payload = await response.json().catch(() => ({}));
+
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
       throw new Error(payload?.error?.message || `Backend sync failed with HTTP ${response.status}`);
+    }
+
+    if (payload?.success && payload?.data && typeof payload.data === "object") {
+      state = normalizeState(payload.data);
+      ensureAuthenticatedUserInState();
+      saveState(state);
+      render();
     }
 
     return true;
@@ -9662,7 +9717,8 @@ function normalizeJobs(items) {
         ctcNotDisclosed: Boolean(item.ctcNotDisclosed),
         requiredSkills: uniqueStringsLocal(requiredSkills),
         preferredSkills: uniqueStringsLocal(preferredSkills),
-        createdAt: String(item.createdAt || todayISO())
+        createdAt: String(item.createdAt || todayISO()),
+        updatedAt: String(item.updatedAt || "")
       };
     });
 }

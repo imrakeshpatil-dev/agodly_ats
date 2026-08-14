@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 
 import { AppStateSnapshot, AppStateStorePayload } from "../types/app-state";
+import { mergeRowsByIdentity } from "../utils/record-merge";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 import { runtimeStateService } from "./runtime-state.service";
 
@@ -87,7 +88,7 @@ class AppStateStoreService {
 
     this.state.users = mergeUserRowsPreservingSecrets(payload.users, this.state.users);
     this.state.clients = mergeRowsByIdentity(payload.clients, this.state.clients);
-    this.state.jobs = mergeRowsByIdentity(payload.jobs, this.state.jobs);
+    this.state.jobs = mergeRowsByIdentity(payload.jobs, this.state.jobs, { preferNewestUpdatedAt: true });
     this.state.interviews = mergeRowsByIdentity(payload.interviews, this.state.interviews);
     this.state.placements = mergeRowsByIdentity(payload.placements, this.state.placements);
     this.state.activities = mergeRowsByIdentity(payload.activities, this.state.activities);
@@ -140,50 +141,6 @@ const normalizeRows = (
   return rows
     .filter((item) => item && typeof item === "object" && !Array.isArray(item))
     .map((item) => ({ ...(item as Record<string, unknown>) }));
-};
-
-const mergeRowsByIdentity = (
-  rows: unknown,
-  fallback: Array<Record<string, unknown>>
-): Array<Record<string, unknown>> => {
-  if (!Array.isArray(rows)) return fallback.map((item) => ({ ...item }));
-
-  const existing = fallback.map((item) => ({ ...item }));
-  const merged = new Map<string, Record<string, unknown>>();
-  const order: string[] = [];
-
-  existing.forEach((row, index) => {
-    const key = getRowIdentity(row) || `existing:${index}`;
-    merged.set(key, row);
-    order.push(key);
-  });
-
-  rows
-    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
-    .forEach((item, index) => {
-      const incoming = { ...(item as Record<string, unknown>) };
-      const key = getRowIdentity(incoming) || `incoming:${Date.now()}:${index}`;
-      const current = merged.get(key);
-
-      if (!order.includes(key)) order.push(key);
-      merged.set(key, current ? { ...current, ...incoming } : incoming);
-    });
-
-  return order.map((key) => merged.get(key)).filter((item): item is Record<string, unknown> => Boolean(item));
-};
-
-const getRowIdentity = (row: Record<string, unknown>): string => {
-  const id = String(row.id || "").trim();
-  if (id) return `id:${id}`;
-
-  const email = String(row.email || "").trim().toLowerCase();
-  if (email) return `email:${email}`;
-
-  const name = String(row.name || row.title || "").trim().toLowerCase();
-  const createdAt = String(row.createdAt || row.scheduledAt || "").trim();
-  if (name && createdAt) return `name-date:${name}:${createdAt}`;
-
-  return "";
 };
 
 const SENSITIVE_USER_FIELDS = new Set(["password", "passwordHash"]);
