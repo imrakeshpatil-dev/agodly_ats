@@ -72,27 +72,11 @@ jobs:
             echo "DATABASE_PATH=${DATABASE_URL#file:}"
             echo "DATA_DIR=$AGODLY_DATA_DIR"
             echo "RESUME_DIR=$AGODLY_DATA_DIR/resumes"
-            echo "ENV_PERMISSIONS=$(stat -f '%Sp' .env 2>/dev/null || stat -c '%A' .env)"
+            echo "ENV_PERMISSIONS=$(stat -c '%A' .env 2>/dev/null || stat -f '%Sp' .env)"
             echo "DATABASE_BYTES=$(wc -c < "${DATABASE_URL#file:}")"
             echo "RESUME_FILES=$(find "$AGODLY_DATA_DIR/resumes" -type f | wc -l)"
             echo "RESUME_BYTES=$(du -sb "$AGODLY_DATA_DIR/resumes" 2>/dev/null | awk '{print $1}' || du -sk "$AGODLY_DATA_DIR/resumes" | awk '{print $1 * 1024}')"
-            node <<'NODE'
-            const Database = require("better-sqlite3");
-            const dbPath = String(process.env.DATABASE_URL || "").replace(/^file:/, "");
-            const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-            const readState = (key) => {
-              const row = db.prepare('SELECT value FROM "RuntimeState" WHERE key = ?').get(key);
-              if (!row) return {};
-              const raw = Buffer.isBuffer(row.value) ? row.value.toString("utf8") : String(row.value);
-              return JSON.parse(raw);
-            };
-            const candidates = readState("candidate-store").candidates || [];
-            const appState = readState("app-state");
-            console.log(`CANDIDATE_COUNT=${candidates.filter((item) => item.status !== "DELETED").length}`);
-            console.log(`JOB_COUNT=${Array.isArray(appState.jobs) ? appState.jobs.length : 0}`);
-            console.log(`CLIENT_COUNT=${Array.isArray(appState.clients) ? appState.clients.length : 0}`);
-            db.close();
-            NODE
+            node -e 'const D=require("better-sqlite3"),db=new D(String(process.env.DATABASE_URL||"").replace(/^file:/,""),{readonly:true,fileMustExist:true}),read=k=>{const r=db.prepare("SELECT value FROM RuntimeState WHERE key = ?").get(k);return r?JSON.parse(Buffer.isBuffer(r.value)?r.value.toString("utf8"):String(r.value)):{}},c=read("candidate-store").candidates||[],a=read("app-state");console.log("CANDIDATE_COUNT="+c.filter(x=>x.status!=="DELETED").length);console.log("JOB_COUNT="+(Array.isArray(a.jobs)?a.jobs.length:0));console.log("CLIENT_COUNT="+(Array.isArray(a.clients)?a.clients.length:0));db.close()'
             if command -v nginx >/dev/null 2>&1; then
               echo "NGINX_STATUS=$(systemctl is-active nginx 2>/dev/null || true)"
               nginx -T 2>/dev/null | awk '/server_name admin\.agodly\.com|proxy_pass|ssl_certificate /{print "NGINX=" $0}' | head -20
@@ -134,27 +118,7 @@ jobs:
             tar -czf "$release_dir/resumes.tar.gz" -C "$AGODLY_DATA_DIR" resumes
             tar -tzf "$release_dir/resumes.tar.gz" >/dev/null
             test -s "$release_dir/resumes.tar.gz"
-            node <<'NODE' > "$release_dir/data-counts.json"
-            const Database = require("better-sqlite3");
-            const dbPath = String(process.env.DATABASE_URL || "").replace(/^file:/, "");
-            const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-            const readState = (key) => {
-              const row = db.prepare('SELECT value FROM "RuntimeState" WHERE key = ?').get(key);
-              if (!row) return {};
-              const raw = Buffer.isBuffer(row.value) ? row.value.toString("utf8") : String(row.value);
-              return JSON.parse(raw);
-            };
-            const candidates = readState("candidate-store").candidates || [];
-            const appState = readState("app-state");
-            console.log(JSON.stringify({
-              activeCandidates: candidates.filter((item) => item.status !== "DELETED").length,
-              totalCandidates: candidates.length,
-              jobs: Array.isArray(appState.jobs) ? appState.jobs.length : 0,
-              clients: Array.isArray(appState.clients) ? appState.clients.length : 0,
-              capturedAt: new Date().toISOString()
-            }, null, 2));
-            db.close();
-            NODE
+            node -e 'const D=require("better-sqlite3"),db=new D(String(process.env.DATABASE_URL||"").replace(/^file:/,""),{readonly:true,fileMustExist:true}),read=k=>{const r=db.prepare("SELECT value FROM RuntimeState WHERE key = ?").get(k);return r?JSON.parse(Buffer.isBuffer(r.value)?r.value.toString("utf8"):String(r.value)):{}},c=read("candidate-store").candidates||[],a=read("app-state");console.log(JSON.stringify({activeCandidates:c.filter(x=>x.status!=="DELETED").length,totalCandidates:c.length,jobs:Array.isArray(a.jobs)?a.jobs.length:0,clients:Array.isArray(a.clients)?a.clients.length:0,capturedAt:new Date().toISOString()},null,2));db.close()' > "$release_dir/data-counts.json"
             if command -v nginx >/dev/null 2>&1 && nginx -T > "$release_dir/nginx-config.txt" 2>&1; then
               chmod 600 "$release_dir/nginx-config.txt"
             else
@@ -182,6 +146,7 @@ jobs:
             export NVM_DIR="$HOME/.nvm"
             . "$NVM_DIR/nvm.sh"
             cd ~/htdocs/admin.agodly.com
+            chmod 600 .env
             echo ">> Pulling approved main commit..."
             git fetch origin main
             git reset --hard origin/main
