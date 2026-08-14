@@ -7,6 +7,7 @@ import {
   canSyncAppState,
   scopeAppStatePayloadForRole
 } from "../lib/server/services/app-state-access.service";
+import { mergeBulkUploadSnapshots } from "../lib/server/services/app-state-store.service";
 import { mergeRowsByIdentity } from "../lib/server/utils/record-merge";
 
 const root = process.cwd();
@@ -34,6 +35,50 @@ test("recruiter sync is limited to recruiting collections", () => {
   assert.equal(scoped.users, undefined);
   assert.equal(scoped.clients, undefined);
   assert.equal(scoped.bulkUpload, undefined);
+});
+
+test("recruiter bulk upload history is stored in an isolated user bucket", async () => {
+  const controller = await read("lib/server/controllers/bootstrap.controller.ts");
+  const bulkUploadController = await read("lib/server/controllers/bulk-upload.controller.ts");
+  const candidateController = await read("lib/server/controllers/candidate.controller.ts");
+  const browser = await read("app.js");
+
+  assert.match(controller, /updateBulkUploadForUser\(authUser\.id, requestedBulkUpload\)/);
+  assert.match(controller, /bulkUploadOwnerId: founder \? undefined : authUser\.id/);
+  assert.match(controller, /isCandidateAssignedToUser\(authUser, candidate\)/);
+  assert.match(controller, /includeOwnedUploadCandidates/);
+  assert.match(bulkUploadController, /recordBulkUploadForUser\(authUser\.id/);
+  assert.match(browser, /const recruiterSections = new Set\(\[[\s\S]*?"bulk-upload"/);
+  assert.match(candidateController, /duplicates\.filter\(\(group\) => isCandidateAssignedToUser\(authUser, group\.duplicateCandidate\)\)/);
+  assert.match(candidateController, /assertCanMutateCandidate\(req, duplicateCandidate\)/);
+});
+
+test("founder upload history aggregates recruiter buckets without duplicate candidate notes", () => {
+  const merged = mergeBulkUploadSnapshots([
+    {
+      totalFiles: 1,
+      completed: 1,
+      lastRunAt: "2026-08-14T08:00:00.000Z",
+      results: [{ fileName: "recruiter-one.csv", message: "1 added" }],
+      candidateNotes: [{ id: "candidate-1", name: "Candidate One" }]
+    },
+    {
+      totalFiles: 2,
+      completed: 2,
+      lastRunAt: "2026-08-14T09:00:00.000Z",
+      results: [{ fileName: "recruiter-two.csv", message: "2 added" }],
+      candidateNotes: [
+        { id: "candidate-1", name: "Candidate One" },
+        { id: "candidate-2", name: "Candidate Two" }
+      ]
+    }
+  ]);
+
+  assert.equal(merged.totalFiles, 3);
+  assert.equal(merged.completed, 3);
+  assert.equal(merged.lastRunAt, "2026-08-14T09:00:00.000Z");
+  assert.equal((merged.results as unknown[]).length, 2);
+  assert.equal((merged.candidateNotes as unknown[]).length, 2);
 });
 
 test("TA managers can sync clients while founders retain full access", () => {
