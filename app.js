@@ -3669,6 +3669,7 @@ function renderBulkUploadSection() {
   const summary = state.bulkUpload;
   const results = Array.isArray(summary?.results) ? summary.results : [];
   const duplicates = Array.isArray(summary?.duplicates) ? summary.duplicates : [];
+  const blockedDuplicates = Array.isArray(summary?.blockedDuplicates) ? summary.blockedDuplicates : [];
   const notes = Array.isArray(summary?.candidateNotes) ? summary.candidateNotes : [];
 
   return `
@@ -3714,7 +3715,7 @@ function renderBulkUploadSection() {
             ${metricCard("Pending", summary.pending || 0)}
             ${metricCard("Completed", summary.completed || 0)}
             ${metricCard("Failed", summary.failed || 0)}
-            ${metricCard("Duplicates", duplicates.length)}
+            ${metricCard("Blocked Duplicates", Number(summary.blockedCount || 0))}
           </div>
         </section>
 
@@ -3754,6 +3755,36 @@ function renderBulkUploadSection() {
                     )
                     .join("")
                 : `<tr><td colspan="5" class="empty">No upload activity yet.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Blocked Duplicate Uploads</h2>
+      <p class="panel-subtitle">These candidates were not saved because their email address or phone number already exists in the database.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Candidate</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              blockedDuplicates.length
+                ? blockedDuplicates
+                    .slice(0, 40)
+                    .map(
+                      (candidate) =>
+                        `<tr><td>${escapeHtml(candidate.name || "Unknown")}</td><td>${escapeHtml(candidate.email || "-")}</td><td>${escapeHtml(candidate.phone || "-")}</td><td>${escapeHtml(candidate.reason || "Blocked duplicate")}</td></tr>`
+                    )
+                    .join("")
+                : `<tr><td colspan="4" class="empty">No duplicate uploads were blocked in recent runs.</td></tr>`
             }
           </tbody>
         </table>
@@ -6899,7 +6930,7 @@ function statusBadge(value) {
     return `<span class="badge yellow">${escapeHtml(value)}</span>`;
   }
 
-  if (["closed", "cancelled", "dropped", "rejected", "archived"].includes(lower)) {
+  if (["closed", "cancelled", "dropped", "rejected", "archived", "blocked"].includes(lower)) {
     return `<span class="badge red">${escapeHtml(value)}</span>`;
   }
 
@@ -7638,6 +7669,14 @@ async function handleBulkUploadViaBackend(files) {
         reason: String(group.reason || "Potential duplicate")
       }))
     : [];
+  const blockedDuplicates = Array.isArray(payload.blockedDuplicates)
+    ? payload.blockedDuplicates.map((candidate) => ({
+        name: String(candidate?.name || "Unknown"),
+        email: String(candidate?.email || ""),
+        phone: String(candidate?.phone || ""),
+        reason: String(candidate?.reason || "Blocked duplicate")
+      }))
+    : [];
 
   applyNewCandidates(addedCandidates);
 
@@ -7649,14 +7688,18 @@ async function handleBulkUploadViaBackend(files) {
     pending: Number(summary.pending || 0),
     completed: Number(summary.completed || 0),
     failed: Number(summary.failed || 0),
+    blockedCount: Number(summary.duplicateCandidates || blockedDuplicates.length),
     lastRunAt: new Date().toISOString(),
     results: [...newResults, ...(state.bulkUpload?.results || [])].slice(0, 120),
     duplicates,
+    blockedDuplicates: [...blockedDuplicates, ...(state.bulkUpload?.blockedDuplicates || [])].slice(0, 120),
     candidateNotes: [...addedCandidates, ...(state.bulkUpload?.candidateNotes || [])].slice(0, 120)
   };
 
   if (addedCandidates.length) {
     recordActivity("bulk-upload", `Bulk upload added ${addedCandidates.length} candidate(s) via backend parser`);
+  } else if (blockedDuplicates.length) {
+    recordActivity("bulk-upload", `Bulk upload blocked ${blockedDuplicates.length} duplicate candidate(s)`);
   } else {
     recordActivity("bulk-upload", "Bulk upload processed via backend with no new candidates");
   }
@@ -9703,6 +9746,7 @@ function normalizeBulkUpload(value) {
     pending: Number(source.pending || 0),
     completed: Number(source.completed || 0),
     failed: Number(source.failed || 0),
+    blockedCount: Number(source.blockedCount || 0),
     lastRunAt: String(source.lastRunAt || ""),
     results: Array.isArray(source.results)
       ? source.results
@@ -9712,7 +9756,18 @@ function normalizeBulkUpload(value) {
             kind: String(item.kind || ""),
             status: String(item.status || "Completed"),
             added: Number(item.added || 0),
+            blocked: Number(item.blocked || 0),
             message: String(item.message || "")
+          }))
+      : [],
+    blockedDuplicates: Array.isArray(source.blockedDuplicates)
+      ? source.blockedDuplicates
+          .filter((candidate) => candidate && (candidate.email || candidate.phone))
+          .map((candidate) => ({
+            name: String(candidate.name || "Unknown"),
+            email: String(candidate.email || ""),
+            phone: String(candidate.phone || ""),
+            reason: String(candidate.reason || "Blocked duplicate")
           }))
       : [],
     duplicates: Array.isArray(source.duplicates)

@@ -80,9 +80,18 @@ export interface DuplicateGroup {
 export interface UploadFileResult {
   fileName: string;
   kind: string;
-  status: "Completed" | "Failed";
+  status: "Completed" | "Blocked" | "Failed";
   added: number;
+  blocked: number;
   message: string;
+}
+
+export interface BlockedDuplicateUpload {
+  name: string;
+  email: string;
+  phone: string;
+  reason: string;
+  matchedCandidateIds: string[];
 }
 
 export interface BulkUploadResponse {
@@ -96,5 +105,6 @@ export interface BulkUploadResponse {
   };
   results: UploadFileResult[];
   addedCandidates: CandidateRecord[];
+  blockedDuplicates: BlockedDuplicateUpload[];
   duplicates: DuplicateGroup[];
 }
