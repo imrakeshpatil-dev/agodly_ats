@@ -1150,6 +1150,29 @@ tbody tr:nth-child(even) td {
   background: linear-gradient(90deg, var(--accent), var(--green));
 }
 
+.recruiter-progress-grid {
+  margin-top: 0.8rem;
+}
+
+.recruiter-target-progress {
+  min-width: 0;
+}
+
+.recruiter-target-progress strong {
+  color: #f4f8ff;
+  font-size: 1.02rem;
+}
+
+.recruiter-nearby-standings {
+  margin-top: 0.8rem;
+}
+
+tbody tr.leaderboard-self td {
+  background: rgba(81, 169, 255, 0.09);
+  border-top-color: rgba(81, 169, 255, 0.28);
+  border-bottom-color: rgba(81, 169, 255, 0.28);
+}
+
 .pipeline-toolbar {
   margin: 0.75rem 0 0.85rem;
   display: flex;

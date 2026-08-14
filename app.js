@@ -1836,7 +1836,7 @@ function renderDashboardSection() {
     </section>
 
     ${renderClosureTrackerPanel(closureTracker)}
-    ${renderTargetAchievementTracker()}
+    ${isFounder ? renderTargetAchievementTracker() : renderRecruiterDashboardPerformance()}
     ${renderOnboardedRevenueTracker()}
 
     <section class="panel">
@@ -2137,6 +2137,131 @@ function renderTargetAchievementTracker() {
                     .join("")
                 : `<tr><td colspan="8" class="empty">No TA performance data available.</td></tr>`
             }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderRecruiterDashboardPerformance() {
+  const currentUser = getCurrentUser();
+  const ranked = rankRecruiterPerformanceRows(
+    getRecruiterPerformanceRows({ includeAll: true, currentMonthOnly: true, ignoreSearch: true })
+  );
+  const currentUserKeys = new Set(
+    [currentUser?.name, currentUser?.email]
+      .map(normalizePersonKey)
+      .filter(Boolean)
+  );
+  const currentIndex = ranked.findIndex(
+    (row) =>
+      (currentUser?.id && row.userId === currentUser.id) ||
+      currentUserKeys.has(normalizePersonKey(row.name))
+  );
+
+  if (currentIndex < 0) {
+    return `
+      <section class="panel">
+        <h2 class="panel-title">My Target &amp; Leaderboard</h2>
+        <p class="panel-subtitle">Your recruiter profile is active, but no performance row is available yet. Ask a founder or TA Manager to confirm your target setup.</p>
+      </section>
+    `;
+  }
+
+  const row = ranked[currentIndex];
+  const rank = currentIndex + 1;
+  const candidateRemaining = Math.max(Number(row.monthlyTarget || 0) - row.candidates, 0);
+  const revenueRemaining = Math.max(Number(row.revenueTarget || 0) - row.revenue, 0);
+  let nearbyStart = Math.max(0, currentIndex - 1);
+  let nearbyEnd = Math.min(ranked.length, nearbyStart + 3);
+  nearbyStart = Math.max(0, nearbyEnd - 3);
+  nearbyEnd = Math.min(ranked.length, nearbyStart + 3);
+  const nearbyRows = ranked.slice(nearbyStart, nearbyEnd);
+
+  return `
+    <section class="panel recruiter-progress-panel">
+      <div class="section-heading-row">
+        <div>
+          <p class="panel-kicker">My Monthly Performance</p>
+          <h2 class="panel-title">Target progress &amp; leaderboard standing</h2>
+          <p class="panel-subtitle">Live progress for ${escapeHtml(row.name)} in the current calendar month.</p>
+        </div>
+        <div class="tracker-summary">
+          <span>Rank #${rank} of ${ranked.length}</span>
+          <span>Score ${row.score}</span>
+          <span>${formatPercent(row.targetAttainment)} candidate target</span>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        ${metricCard("Candidate Target", row.monthlyTarget || "Not set")}
+        ${metricCard("Candidates Added", row.candidates)}
+        ${metricCard("Submitted", row.submitted)}
+        ${metricCard("Joined", row.joined)}
+        ${metricCard("Revenue Target", formatCurrency(row.revenueTarget))}
+        ${metricCard("Leaderboard Rank", `#${rank} / ${ranked.length}`)}
+      </div>
+
+      <div class="graph-grid recruiter-progress-grid">
+        <article class="chart-card">
+          <div class="chart-card-head">
+            <h3>Candidate target</h3>
+            <p>${row.candidates} achieved · ${candidateRemaining} remaining</p>
+          </div>
+          <div class="target-cell recruiter-target-progress">
+            <strong>${row.candidates} / ${row.monthlyTarget || "-"}</strong>
+            ${progressBar(row.targetAttainment)}
+            <span class="muted-cell">${formatPercent(row.targetAttainment)} complete</span>
+          </div>
+        </article>
+        <article class="chart-card">
+          <div class="chart-card-head">
+            <h3>Revenue target</h3>
+            <p>${formatCurrency(row.revenue)} achieved · ${formatCurrency(revenueRemaining)} remaining</p>
+          </div>
+          <div class="target-cell recruiter-target-progress">
+            <strong>${formatCurrency(row.revenue)} / ${formatCurrency(row.revenueTarget)}</strong>
+            ${progressBar(row.revenueAttainment)}
+            <span class="muted-cell">${formatPercent(row.revenueAttainment)} complete</span>
+          </div>
+        </article>
+      </div>
+
+      <div class="table-wrap recruiter-nearby-standings">
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Recruiter</th>
+              <th>Target Progress</th>
+              <th>Submitted</th>
+              <th>Joined</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${nearbyRows
+              .map((item) => {
+                const itemIndex = ranked.indexOf(item);
+                const isCurrent = itemIndex === currentIndex;
+                return `
+                  <tr class="${isCurrent ? "leaderboard-self" : ""}">
+                    <td><span class="rank-pill">${itemIndex + 1}</span></td>
+                    <td><strong>${escapeHtml(item.name)}</strong>${isCurrent ? '<br /><span class="muted-cell">You</span>' : ""}</td>
+                    <td>
+                      <div class="target-cell">
+                        <span>${item.candidates}/${item.monthlyTarget || "-"} · ${formatPercent(item.targetAttainment)}</span>
+                        ${progressBar(item.targetAttainment)}
+                      </div>
+                    </td>
+                    <td>${item.submitted}</td>
+                    <td>${item.joined}</td>
+                    <td><strong>${item.score}</strong></td>
+                  </tr>
+                `;
+              })
+              .join("")}
           </tbody>
         </table>
       </div>
@@ -4092,7 +4217,7 @@ function renderTeamDashboardSection() {
 
 function renderRecruiterPerformanceSection() {
   const rows = getRecruiterPerformanceRows();
-  const ranked = [...rows].sort((a, b) => b.score - a.score || b.joined - a.joined || b.submitted - a.submitted);
+  const ranked = rankRecruiterPerformanceRows(rows);
   const top = ranked[0];
   const atRisk = ranked.filter((item) => item.targetAttainment < 50 && item.monthlyTarget > 0).length;
   const avgConversion = average(rows.map((item) => item.conversion));
@@ -4199,34 +4324,63 @@ function renderRecruiterPerformanceSection() {
   `;
 }
 
-function getRecruiterPerformanceRows() {
-  const recruitingRoles = RECRUITING_ROLES;
-  const activeCandidates = state.candidates.filter((item) => !isCandidateDeleted(item) && inSelectedPeriod(item.createdAt));
-  const periodInterviews = state.interviews.filter((item) => inSelectedPeriod(item.scheduledAt));
-  const periodPlacements = state.placements.filter((item) => inSelectedPeriod(item.date));
-  const usersByName = new Map(state.users.map((user) => [normalizePersonKey(user.name), user]));
-  const recruiterNames = new Set(
-    state.users
-      .filter((user) => recruitingRoles.has(user.role))
-      .map((user) => user.name)
-      .filter(Boolean)
+function rankRecruiterPerformanceRows(rows) {
+  return [...rows].sort(
+    (a, b) =>
+      b.score - a.score ||
+      b.joined - a.joined ||
+      b.submitted - a.submitted ||
+      b.targetAttainment - a.targetAttainment ||
+      String(a.name || "").localeCompare(String(b.name || ""))
   );
+}
 
-  activeCandidates.forEach((candidate) => {
-    if (candidate.recruiter) recruiterNames.add(candidate.recruiter);
+function getRecruiterPerformanceRows(options = {}) {
+  const includeAll = Boolean(options.includeAll);
+  const currentMonthOnly = Boolean(options.currentMonthOnly);
+  const ignoreSearch = Boolean(options.ignoreSearch);
+  const recruitingRoles = RECRUITING_ROLES;
+  const inPerformancePeriod = (value) => currentMonthOnly ? isCurrentMonth(value) : inSelectedPeriod(value);
+  const activeCandidates = state.candidates.filter((item) => !isCandidateDeleted(item) && inPerformancePeriod(item.createdAt));
+  const periodInterviews = state.interviews.filter((item) => inPerformancePeriod(item.scheduledAt));
+  const periodPlacements = state.placements.filter((item) => inPerformancePeriod(item.date));
+  const recruitingUsers = state.users.filter((user) => recruitingRoles.has(user.role));
+  const usersByIdentity = new Map();
+  const participants = new Map();
+
+  recruitingUsers.forEach((user) => {
+    [user.name, user.email].map(normalizePersonKey).filter(Boolean).forEach((key) => usersByIdentity.set(key, user));
   });
 
-  periodPlacements.forEach((placement) => {
-    if (placement.recruiter) recruiterNames.add(placement.recruiter);
-  });
+  const addParticipant = (identity, userHint = null) => {
+    const identityKey = normalizePersonKey(identity);
+    if (!identityKey && !userHint) return;
+    const user = userHint || usersByIdentity.get(identityKey) || null;
+    if (!user && ["bulk upload", "unassigned", "unknown user", "system"].includes(identityKey)) return;
+    const canonicalIdentity = user?.id || normalizePersonKey(user?.email) || normalizePersonKey(user?.name) || identityKey;
+    const participantKey = `recruiter:${canonicalIdentity}`;
+    const participant = participants.get(participantKey) || {
+      name: user?.name || String(identity || "Unassigned"),
+      user: user || {},
+      aliases: new Set()
+    };
 
-  return Array.from(recruiterNames)
-    .map((name) => {
-      const user = usersByName.get(normalizePersonKey(name)) || {};
-      const candidates = activeCandidates.filter((candidate) => normalizePersonKey(candidate.recruiter) === normalizePersonKey(name));
+    [identity, user?.name, user?.email].map(normalizePersonKey).filter(Boolean).forEach((key) => participant.aliases.add(key));
+    participants.set(participantKey, participant);
+  };
+
+  recruitingUsers.forEach((user) => addParticipant(user.name || user.email, user));
+  activeCandidates.forEach((candidate) => addParticipant(candidate.recruiter));
+  periodPlacements.forEach((placement) => addParticipant(placement.recruiter));
+
+  return Array.from(participants.values())
+    .map((participant) => {
+      const user = participant.user || {};
+      const name = participant.name;
+      const candidates = activeCandidates.filter((candidate) => participant.aliases.has(normalizePersonKey(candidate.recruiter)));
       const candidateIds = new Set(candidates.map((candidate) => candidate.id));
       const interviews = periodInterviews.filter((interview) => candidateIds.has(interview.candidateId));
-      const placements = periodPlacements.filter((placement) => normalizePersonKey(placement.recruiter) === normalizePersonKey(name));
+      const placements = periodPlacements.filter((placement) => participant.aliases.has(normalizePersonKey(placement.recruiter)));
       const joinedCandidateIds = new Set([
         ...candidates.filter((candidate) => candidate.stage === "Onboarded").map((candidate) => candidate.id),
         ...placements.map((placement) => placement.candidateId).filter(Boolean)
@@ -4286,8 +4440,8 @@ function getRecruiterPerformanceRows() {
         score
       };
     })
-    .filter((row) => canCurrentUserManageTaRow(row))
-    .filter((row) => matchesSearch(`${row.name} ${row.role} ${row.team} ${row.manager}`));
+    .filter((row) => includeAll || canCurrentUserManageTaRow(row))
+    .filter((row) => ignoreSearch || matchesSearch(`${row.name} ${row.role} ${row.team} ${row.manager}`));
 }
 
 function getTeamPerformanceRows(recruiterRows) {
@@ -5696,41 +5850,29 @@ function renderRevenueSection() {
 }
 
 function renderLeaderboardSection() {
-  const byRecruiter = new Map();
-
-  state.candidates.forEach((candidate) => {
-    if (!matchesSearch(candidate.recruiter || "")) return;
-
-    const current = byRecruiter.get(candidate.recruiter) || { recruiter: candidate.recruiter, candidates: 0, onboarded: 0, revenue: 0 };
-    current.candidates += 1;
-    if (candidate.stage === "Onboarded") current.onboarded += 1;
-    byRecruiter.set(candidate.recruiter, current);
-  });
-
-  state.placements.forEach((placement) => {
-    const current = byRecruiter.get(placement.recruiter) || {
-      recruiter: placement.recruiter,
-      candidates: 0,
-      onboarded: 0,
-      revenue: 0
-    };
-    current.revenue += Number(placement.revenue || 0);
-    byRecruiter.set(placement.recruiter, current);
-  });
-
-  const rows = Array.from(byRecruiter.values()).sort((a, b) => b.revenue - a.revenue || b.onboarded - a.onboarded);
+  const ranked = rankRecruiterPerformanceRows(
+    getRecruiterPerformanceRows({ includeAll: true, currentMonthOnly: true, ignoreSearch: true })
+  );
+  const rows = ranked
+    .map((item, index) => ({ ...item, rank: index + 1 }))
+    .filter((item) => matchesSearch(`${item.name} ${item.team} ${item.role}`));
 
   return `
     <section class="panel">
       <h2 class="panel-title">Recruiter Leaderboard</h2>
+      <p class="panel-subtitle">Current-month standing using the same score and target calculations shown on recruiter dashboards.</p>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
+              <th>Rank</th>
               <th>Recruiter</th>
               <th>Candidates</th>
-              <th>Onboarded</th>
+              <th>Target Progress</th>
+              <th>Submitted</th>
+              <th>Joined</th>
               <th>Revenue</th>
+              <th>Score</th>
             </tr>
           </thead>
           <tbody>
@@ -5738,10 +5880,10 @@ function renderLeaderboardSection() {
               ? rows
                   .map(
                     (item) =>
-                      `<tr><td>${escapeHtml(item.recruiter)}</td><td>${item.candidates}</td><td>${item.onboarded}</td><td>${formatCurrency(item.revenue)}</td></tr>`
+                      `<tr><td><span class="rank-pill">${item.rank}</span></td><td><strong>${escapeHtml(item.name)}</strong><br /><span class="muted-cell">${escapeHtml(item.team)}</span></td><td>${item.candidates}</td><td><div class="target-cell"><span>${item.candidates}/${item.monthlyTarget || "-"} · ${formatPercent(item.targetAttainment)}</span>${progressBar(item.targetAttainment)}</div></td><td>${item.submitted}</td><td>${item.joined}</td><td>${formatCurrency(item.revenue)}</td><td><strong>${item.score}</strong></td></tr>`
                   )
                   .join("")
-              : `<tr><td colspan="4" class="empty">No leaderboard data available.</td></tr>`}
+              : `<tr><td colspan="8" class="empty">No leaderboard data available.</td></tr>`}
           </tbody>
         </table>
       </div>
