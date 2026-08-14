@@ -242,7 +242,9 @@ const readRuntimeApplicationData = async (): Promise<{
   error?: string;
 }> => {
   try {
-    const candidates = await candidateStoreService.getActiveCandidates();
+    const candidates = (await candidateStoreService.getAllCandidates()).filter(
+      (candidate) => candidate.status !== "DELETED"
+    );
     const snapshot = await appStateStoreService.getSnapshot(candidates);
     return {
       counts: {

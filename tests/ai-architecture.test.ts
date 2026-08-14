@@ -27,7 +27,8 @@ test("diagnostics reads live RuntimeState-backed ATS counts and exposes safe AI 
     read("lib/server/services/health.service.ts"),
     read("app.js")
   ]);
-  assert.match(health, /candidateStoreService\.getActiveCandidates\(\)/);
+  assert.match(health, /candidateStoreService\.getAllCandidates\(\)/);
+  assert.match(health, /candidate\.status !== "DELETED"/);
   assert.match(health, /appStateStoreService\.getSnapshot\(candidates\)/);
   assert.match(browser, /AI Error Category/);
   assert.doesNotMatch(browser, /OPENAI_API_KEY/);
