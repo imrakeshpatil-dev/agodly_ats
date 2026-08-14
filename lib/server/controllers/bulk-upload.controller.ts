@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
+import { isFounderRole } from "../services/auth.service";
+import { appStateStoreService } from "../services/app-state-store.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
 
 export const parseBulkUpload = async (req: Request, res: Response): Promise<void> => {
@@ -23,6 +25,21 @@ export const parseBulkUpload = async (req: Request, res: Response): Promise<void
     name: authUser.name,
     email: authUser.email
   });
+
+  if (!isFounderRole(authUser.role)) {
+    await appStateStoreService.recordBulkUploadForUser(authUser.id, {
+      totalFiles: response.summary.totalFiles,
+      pending: response.summary.pending,
+      completed: response.summary.completed,
+      failed: response.summary.failed,
+      blockedCount: response.summary.duplicateCandidates,
+      lastRunAt: new Date().toISOString(),
+      results: response.results,
+      blockedDuplicates: response.blockedDuplicates,
+      duplicates: response.duplicates,
+      candidateNotes: response.addedCandidates
+    });
+  }
 
   res.status(200).json({
     success: true,

@@ -8,6 +8,7 @@ import { runtimeStateService } from "./runtime-state.service";
 
 interface AppStateStoreFile {
   bulkUpload: Record<string, unknown>;
+  bulkUploadByUser: Record<string, Record<string, unknown>>;
   users: Array<Record<string, unknown>>;
   clients: Array<Record<string, unknown>>;
   jobs: Array<Record<string, unknown>>;
@@ -26,11 +27,19 @@ class AppStateStoreService {
     this.filePath = resolveRuntimeDataPath("app-state.json");
   }
 
-  async getSnapshot(candidates: AppStateSnapshot["candidates"]): Promise<AppStateSnapshot> {
+  async getSnapshot(
+    candidates: AppStateSnapshot["candidates"],
+    options: { bulkUploadOwnerId?: string } = {}
+  ): Promise<AppStateSnapshot> {
     await this.ensureLoaded();
 
+    const ownerId = normalizeOwnerId(options.bulkUploadOwnerId);
+    const bulkUpload = ownerId
+      ? { ...(this.state.bulkUploadByUser[ownerId] || {}) }
+      : mergeBulkUploadSnapshots([this.state.bulkUpload, ...Object.values(this.state.bulkUploadByUser)]);
+
     return {
-      bulkUpload: { ...this.state.bulkUpload },
+      bulkUpload,
       users: this.state.users.map(sanitizeUserForSnapshot),
       candidates: candidates.map((item) => ({ ...item })),
       clients: this.state.clients.map((item) => ({ ...item })),
@@ -93,6 +102,35 @@ class AppStateStoreService {
     this.state.placements = mergeRowsByIdentity(payload.placements, this.state.placements);
     this.state.activities = mergeRowsByIdentity(payload.activities, this.state.activities);
 
+    await this.persist();
+  }
+
+  async updateBulkUploadForUser(ownerId: string, bulkUpload: Record<string, unknown>): Promise<void> {
+    await this.ensureLoaded();
+
+    const normalizedOwnerId = normalizeOwnerId(ownerId);
+    if (!normalizedOwnerId) return;
+
+    this.state.bulkUploadByUser[normalizedOwnerId] = normalizeBulkUploadSnapshot(bulkUpload);
+    await this.persist();
+  }
+
+  async recordBulkUploadForUser(ownerId: string, bulkUpload: Record<string, unknown>): Promise<void> {
+    await this.ensureLoaded();
+
+    const normalizedOwnerId = normalizeOwnerId(ownerId);
+    if (!normalizedOwnerId) return;
+
+    const current = this.state.bulkUploadByUser[normalizedOwnerId] || {};
+    const incoming = normalizeBulkUploadSnapshot(bulkUpload);
+    this.state.bulkUploadByUser[normalizedOwnerId] = {
+      ...current,
+      ...incoming,
+      results: mergeBulkRows([incoming, current], "results"),
+      blockedDuplicates: mergeBulkRows([incoming, current], "blockedDuplicates"),
+      duplicates: mergeBulkRows([incoming, current], "duplicates", "duplicateCandidate"),
+      candidateNotes: mergeBulkRows([incoming, current], "candidateNotes")
+    };
     await this.persist();
   }
 
@@ -210,6 +248,7 @@ const mergeUserRowsPreservingSecrets = (
 
 const createDefaultState = (): AppStateStoreFile => ({
   bulkUpload: {},
+  bulkUploadByUser: {},
   users: [],
   clients: [],
   jobs: [],
@@ -223,6 +262,7 @@ const normalizeStateFile = (parsed: Partial<AppStateStoreFile>): AppStateStoreFi
     parsed.bulkUpload && typeof parsed.bulkUpload === "object" && !Array.isArray(parsed.bulkUpload)
       ? { ...parsed.bulkUpload }
       : {},
+  bulkUploadByUser: normalizeBulkUploadByUser(parsed.bulkUploadByUser),
   users: normalizeRows(parsed.users, []),
   clients: normalizeRows(parsed.clients, []),
   jobs: normalizeRows(parsed.jobs, []),
@@ -230,5 +270,76 @@ const normalizeStateFile = (parsed: Partial<AppStateStoreFile>): AppStateStoreFi
   placements: normalizeRows(parsed.placements, []),
   activities: normalizeRows(parsed.activities, [])
 });
+
+const normalizeOwnerId = (value: unknown): string => String(value || "").trim().toLowerCase();
+
+const normalizeBulkUploadByUser = (value: unknown): Record<string, Record<string, unknown>> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, Record<string, unknown>>>(
+    (normalized, [ownerId, snapshot]) => {
+      const key = normalizeOwnerId(ownerId);
+      if (!key || !snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return normalized;
+      normalized[key] = normalizeBulkUploadSnapshot(snapshot as Record<string, unknown>);
+      return normalized;
+    },
+    {}
+  );
+};
+
+const normalizeBulkUploadSnapshot = (value: Record<string, unknown>): Record<string, unknown> => ({
+  ...value,
+  results: normalizeRows(value.results, []).slice(0, 120),
+  blockedDuplicates: normalizeRows(value.blockedDuplicates, []).slice(0, 120),
+  duplicates: normalizeRows(value.duplicates, []).slice(0, 120),
+  candidateNotes: normalizeRows(value.candidateNotes, []).slice(0, 120)
+});
+
+export const mergeBulkUploadSnapshots = (
+  snapshots: Array<Record<string, unknown>>
+): Record<string, unknown> => {
+  const valid = snapshots.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  if (!valid.length) return {};
+  if (valid.length === 1) return normalizeBulkUploadSnapshot(valid[0]);
+
+  return {
+    totalFiles: sumBulkMetric(valid, "totalFiles"),
+    pending: sumBulkMetric(valid, "pending"),
+    completed: sumBulkMetric(valid, "completed"),
+    failed: sumBulkMetric(valid, "failed"),
+    blockedCount: sumBulkMetric(valid, "blockedCount"),
+    lastRunAt: valid.map((item) => String(item.lastRunAt || "")).sort().at(-1) || "",
+    results: mergeBulkRows(valid, "results"),
+    blockedDuplicates: mergeBulkRows(valid, "blockedDuplicates"),
+    duplicates: mergeBulkRows(valid, "duplicates", "duplicateCandidate"),
+    candidateNotes: mergeBulkRows(valid, "candidateNotes")
+  };
+};
+
+const sumBulkMetric = (snapshots: Array<Record<string, unknown>>, field: string): number =>
+  snapshots.reduce((total, snapshot) => total + Math.max(0, Number(snapshot[field] || 0)), 0);
+
+const mergeBulkRows = (
+  snapshots: Array<Record<string, unknown>>,
+  field: string,
+  nestedIdentityField = ""
+): Array<Record<string, unknown>> => {
+  const rows = snapshots.flatMap((snapshot) => normalizeRows(snapshot[field], []));
+  const seen = new Set<string>();
+
+  return rows
+    .filter((row) => {
+      const identitySource = nestedIdentityField && row[nestedIdentityField] && typeof row[nestedIdentityField] === "object"
+        ? row[nestedIdentityField] as Record<string, unknown>
+        : row;
+      const identity = String(
+        identitySource.id || identitySource.email || identitySource.phone || `${identitySource.fileName || ""}:${identitySource.message || ""}`
+      ).trim().toLowerCase();
+      if (!identity || seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    })
+    .slice(0, 120);
+};
 
 export const appStateStoreService = new AppStateStoreService();

@@ -18,12 +18,20 @@ import { uniqueStrings } from "../utils/text";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 
-export const listPendingDuplicates = async (_req: Request, res: Response): Promise<void> => {
+export const listPendingDuplicates = async (req: Request, res: Response): Promise<void> => {
+  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
+  if (!authUser) {
+    throw new AppError("Unauthorized", 401);
+  }
+
   const duplicates = await bulkUploadService.listPendingDuplicates();
+  const scopedDuplicates = isFounderRole(authUser.role)
+    ? duplicates
+    : duplicates.filter((group) => isCandidateAssignedToUser(authUser, group.duplicateCandidate));
 
   res.status(200).json({
     success: true,
-    duplicates
+    duplicates: scopedDuplicates
   });
 };
 
@@ -216,6 +224,14 @@ export const mergeDuplicate = async (req: Request, res: Response): Promise<void>
     throw new AppError("primaryCandidateId and duplicateCandidateId are required", 400);
   }
 
+  const primaryCandidate = await candidateStoreService.getCandidateById(primaryCandidateId);
+  const duplicateCandidate = await candidateStoreService.getCandidateById(duplicateCandidateId);
+  if (!primaryCandidate || !duplicateCandidate) {
+    throw new AppError("Candidate not found", 404);
+  }
+  assertCanMutateCandidate(req, primaryCandidate);
+  assertCanMutateCandidate(req, duplicateCandidate);
+
   const mergedCandidate = await bulkUploadService.mergeDuplicate(primaryCandidateId, duplicateCandidateId);
 
   res.status(200).json({
@@ -229,6 +245,12 @@ export const ignoreDuplicate = async (req: Request, res: Response): Promise<void
   if (!duplicateCandidateId) {
     throw new AppError("Duplicate candidate id is required", 400);
   }
+
+  const duplicateCandidate = await candidateStoreService.getCandidateById(duplicateCandidateId);
+  if (!duplicateCandidate) {
+    throw new AppError("Candidate not found", 404);
+  }
+  assertCanMutateCandidate(req, duplicateCandidate);
 
   const ignoredCandidate = await bulkUploadService.ignoreDuplicate(duplicateCandidateId);
 
