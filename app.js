@@ -44,9 +44,21 @@ const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "pdf", "doc", "docx"]);
 const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
 
-const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "Dropped"];
+const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
+const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
+const PIPELINE_INACTIVE_STAGES = new Set(["Onboarded", "On Hold", "Pool", "Dropped"]);
+const PIPELINE_PROGRESS_RANK = new Map([
+  ["Identified", 0],
+  ["Qualified", 1],
+  ["Submitted", 2],
+  ["Client Review", 3],
+  ["Interview", 4],
+  ["Offer", 5],
+  ["Onboarded", 6],
+  ["Dropped", 7]
+]);
 const CLOSURE_TYPE_OPTIONS = ["FTE", "Contractual"];
-const TRACKING_STATUS_OPTIONS = ["Not Screened", "Screened", "Rejected", "Submitted", "Interview", "Offer", "Onboarded", "Dropped"];
+const TRACKING_STATUS_OPTIONS = ["Not Screened", "Screened", "Rejected", "Submitted", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
 const JOB_TYPE_OPTIONS = ["FTE", "C2C", "C2H"];
 const BILLING_RATE_TYPE_OPTIONS = ["Monthly", "Hourly"];
 const AI_SKILL_CATALOG = [
@@ -227,6 +239,8 @@ const STAGE_BADGE = {
   Interview: "blue",
   Offer: "purple",
   Onboarded: "green",
+  "On Hold": "yellow",
+  Pool: "blue",
   Dropped: "red"
 };
 
@@ -347,6 +361,7 @@ const ui = {
     selectedId: "",
     editDraft: null,
     reparseInProgress: false,
+    resumeUploadInProgress: false,
     isLoading: false,
     page: 1,
     limit: 25,
@@ -875,12 +890,17 @@ function onSectionClick(event) {
   }
 
   if (action === "download-candidate-json") {
-    downloadCandidateJson();
+    exportSelectedCandidateProfile();
     return;
   }
 
   if (action === "preview-candidate-profile") {
     openSelectedCandidateProfilePreview();
+    return;
+  }
+
+  if (action === "apply-resume-extraction") {
+    applySelectedResumeExtractionToDraft();
     return;
   }
 
@@ -1087,6 +1107,13 @@ function onSectionChange(event) {
     const field = event.target.dataset.field;
     if (!field) return;
     ui.candidates.editDraft[field] = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidate-resume-file']")) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void uploadSelectedCandidateResume(file);
     return;
   }
 
@@ -1785,7 +1812,7 @@ function renderDashboardSection() {
 
   const totalCandidates = candidates.length;
   const totalJobs = jobs.length;
-  const submittedThisMonth = candidates.filter((item) => stageRank(item.stage) >= stageRank("Submitted") && isCurrentMonth(item.createdAt)).length;
+  const submittedThisMonth = candidates.filter((item) => candidateHasReachedStage(item, "Submitted") && isCurrentMonth(item.createdAt)).length;
   const joinedThisMonth = placements.filter((item) => isCurrentMonth(item.date)).length;
   const totalRevenue = placements.reduce((acc, item) => acc + Number(item.revenue || 0), 0);
   const totalMargin = placements.reduce((acc, item) => acc + calculatePlacementMargin(item), 0);
@@ -1800,7 +1827,7 @@ function renderDashboardSection() {
   const onboarded = candidates.filter((item) => item.stage === "Onboarded").length;
   const identified = Math.max(candidates.filter((item) => item.stage === "Identified").length, 1);
   const conversion = Math.round((onboarded / identified) * 100);
-  const activePipeline = candidates.filter((item) => !["Onboarded", "Dropped"].includes(item.stage)).length;
+  const activePipeline = candidates.filter((item) => !PIPELINE_INACTIVE_STAGES.has(item.stage)).length;
 
   const sourceStats = aggregateBySource(candidates);
   const commandCenter = getOperationalCommandCenter(candidates, jobs);
@@ -2471,10 +2498,10 @@ function renderCandidatesSection() {
 
   return `
     <section class="candidates-layout">
-      <article class="panel">
+      <article class="panel candidate-list-panel">
         <h2 class="panel-title">Candidates</h2>
         <p class="panel-subtitle">Edit candidates or move them to Deleted Candidates with double confirmation.</p>
-        <div class="table-actions">
+        <div class="table-actions candidate-controls">
           <button class="tool-btn ${view === "active" ? "primary" : ""}" type="button" data-action="candidates-view" data-view="active">
             Active (${activeCount})
           </button>
@@ -2503,7 +2530,7 @@ function renderCandidatesSection() {
             </select>
           </label>
         </div>
-        <div class="table-actions">
+        <div class="table-actions candidate-results-bar" aria-live="polite">
           <span class="panel-subtitle">${
             ui.candidates.isLoading
               ? "Loading candidates..."
@@ -2512,8 +2539,8 @@ function renderCandidatesSection() {
                 : "No candidates found for current filters."
           }</span>
         </div>
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap candidate-table-wrap">
+          <table class="candidate-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -2547,7 +2574,7 @@ function renderCandidatesSection() {
             </tbody>
           </table>
         </div>
-        <div class="table-actions">
+        <div class="table-actions candidate-pagination">
           <button
             class="tool-btn"
             type="button"
@@ -4427,8 +4454,8 @@ function getRecruiterPerformanceRows(options = {}) {
         ...candidates.filter((candidate) => candidate.stage === "Onboarded").map((candidate) => candidate.id),
         ...placements.map((placement) => placement.candidateId).filter(Boolean)
       ]);
-      const qualified = candidates.filter((candidate) => stageRank(candidate.stage) >= stageRank("Qualified")).length;
-      const submitted = candidates.filter((candidate) => stageRank(candidate.stage) >= stageRank("Submitted")).length;
+      const qualified = candidates.filter((candidate) => candidateHasReachedStage(candidate, "Qualified")).length;
+      const submitted = candidates.filter((candidate) => candidateHasReachedStage(candidate, "Submitted")).length;
       const offers = candidates.filter((candidate) => ["Offer", "Onboarded"].includes(candidate.stage)).length;
       const joined = joinedCandidateIds.size;
       const dropped = candidates.filter((candidate) => candidate.stage === "Dropped").length;
@@ -4471,7 +4498,7 @@ function getRecruiterPerformanceRows(options = {}) {
         offers,
         joined,
         dropped,
-        activePipeline: candidates.filter((candidate) => !["Onboarded", "Dropped"].includes(candidate.stage)).length,
+        activePipeline: candidates.filter((candidate) => !PIPELINE_INACTIVE_STAGES.has(candidate.stage)).length,
         revenue,
         cost,
         margin,
@@ -4737,11 +4764,11 @@ function getCandidateTrackingDate(candidate, type) {
   const tracking = normalizeCandidateTracking(candidate);
   if (type === "screened") {
     if (tracking.screenedAt) return tracking.screenedAt;
-    return stageRank(candidate?.stage) >= stageRank("Qualified") ? candidate?.createdAt || "" : "";
+    return candidateHasReachedStage(candidate, "Qualified") ? candidate?.createdAt || "" : "";
   }
   if (type === "submitted") {
     if (tracking.submittedAt) return tracking.submittedAt;
-    return stageRank(candidate?.stage) >= stageRank("Submitted") ? candidate?.createdAt || "" : "";
+    return candidateHasReachedStage(candidate, "Submitted") ? candidate?.createdAt || "" : "";
   }
   if (type === "rejected") {
     if (tracking.rejectedAt) return tracking.rejectedAt;
@@ -4799,9 +4826,9 @@ function getCandidateResumeMeta(candidate) {
     parsedData.originalResume && typeof parsedData.originalResume === "object" && !Array.isArray(parsedData.originalResume)
       ? parsedData.originalResume
       : {};
-  const fileName = String(originalResume.fileName || parsedData.uploadFileName || parsedData.sourceFileName || deriveResumeFileNameFromSource(input.source) || "").trim();
+  const fileName = String(originalResume.fileName || deriveResumeFileNameFromSource(input.source) || "").trim();
   const resumeUrl = String(originalResume.resumeUrl || input.resumeUrl || "").trim();
-  const fileType = String(originalResume.fileType || parsedData.uploadFileType || getFileExtension(fileName || resumeUrl).toUpperCase() || "").trim();
+  const fileType = String(originalResume.fileType || getFileExtension(fileName || resumeUrl).toUpperCase() || "").trim();
 
   return {
     fileName,
@@ -4809,6 +4836,89 @@ function getCandidateResumeMeta(candidate) {
     resumeUrl,
     sizeBytes: Number(originalResume.sizeBytes || 0) || 0
   };
+}
+
+function getCandidateResumeExtraction(candidate) {
+  const parsedData = candidate?.parsedData;
+  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return null;
+  const extraction = parsedData.resumeExtraction;
+  return extraction && typeof extraction === "object" && !Array.isArray(extraction) ? extraction : null;
+}
+
+function getCandidateResumeVersions(candidate) {
+  const parsedData = candidate?.parsedData;
+  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return [];
+  return Array.isArray(parsedData.resumeVersions)
+    ? parsedData.resumeVersions.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function getCandidateImportSource(candidate) {
+  const parsedData = candidate?.parsedData;
+  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return null;
+  const uploadType = String(parsedData.uploadFileType || "").toUpperCase();
+  const source = String(candidate?.source || "");
+  if (uploadType !== "CSV" && !/^CSV Upload \(/i.test(source)) return null;
+  const sourceMatch = source.match(/^CSV Upload \((.+)\)$/i);
+  return { fileName: String(parsedData.uploadFileName || sourceMatch?.[1] || "CSV import") };
+}
+
+function renderResumeExtraction(extraction) {
+  if (!extraction) {
+    return `<section class="resume-extraction-card"><h4>CV Summary</h4><p class="panel-subtitle">No CV extraction is available. Manual candidate fields remain unchanged.</p></section>`;
+  }
+  const list = (value) => (Array.isArray(value) ? value.map(String).filter(Boolean) : []);
+  const skills = list(extraction.skills);
+  const employment = list(extraction.employment);
+  const education = list(extraction.education);
+  const projects = list(extraction.projects);
+  const missing = list(extraction.missingInformation);
+  return `
+    <section class="resume-extraction-card">
+      <div class="resume-extraction-head"><h4>CV Summary</h4><span>${escapeHtml(String(extraction.status || "Extracted"))}</span></div>
+      <p>${escapeHtml(String(extraction.profileSummary || "No summary was extracted."))}</p>
+      <div class="resume-extraction-grid">
+        <div><strong>Skills</strong><span>${escapeHtml(skills.join(", ") || "Not extracted")}</span></div>
+        <div><strong>Current employment</strong><span>${escapeHtml([extraction.currentRole, extraction.currentCompany].filter(Boolean).join(" at ") || "Not extracted")}</span></div>
+        <div><strong>Employment history</strong><span>${escapeHtml(employment.join(", ") || "Not extracted")}</span></div>
+        <div><strong>Education</strong><span>${escapeHtml(education.join(" · ") || "Not extracted")}</span></div>
+        <div><strong>Projects</strong><span>${escapeHtml(projects.join(" · ") || "Not extracted")}</span></div>
+        <div><strong>Missing information</strong><span>${escapeHtml(missing.join(", ") || "None identified")}</span></div>
+      </div>
+      <p class="resume-extraction-note">Parsed information is a suggestion. Use “Apply Parsed Data to Draft”, review it, then Save Changes.</p>
+    </section>`;
+}
+
+function renderResumeVersions(versions) {
+  if (!versions.length) return "";
+  return `
+    <details class="resume-version-card">
+      <summary>CV version history (${versions.length})</summary>
+      <div class="resume-version-list">
+        ${versions
+          .map(
+            (version, index) => `<p><strong>${index === 0 ? "Current · " : ""}${escapeHtml(String(version.fileName || "CV"))}</strong><span>${escapeHtml(formatShortDate(String(version.uploadedAt || "")))} · ${escapeHtml(String(version.uploadedBy || "Unknown"))}</span></p>`
+          )
+          .join("")}
+      </div>
+    </details>`;
+}
+
+function renderResumeDiagnostics(candidate) {
+  if (!canCurrentUserAccessFounderWorkspace()) return "";
+  const data = candidate?.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? candidate.parsedData
+    : {};
+  const extraction = getCandidateResumeExtraction(candidate) || {};
+  const rows = [
+    ["Status", candidate?.parsingStatus || extraction.status || "Unknown"],
+    ["Parser", extraction.parser || data.parser || "Unknown"],
+    ["Provider", extraction.provider || data.provider || "Not reported"],
+    ["Model", extraction.model || data.model || "Not reported"],
+    ["Parsed", extraction.parsedAt || data.reparsedAt || data.parsedAt || "Not reported"],
+    ["Retained versions", getCandidateResumeVersions(candidate).length]
+  ];
+  return `<details class="resume-version-card"><summary>Admin parsing diagnostics</summary><div class="resume-diagnostic-grid">${rows.map(([label, value]) => `<p><strong>${escapeHtml(String(label))}</strong><span>${escapeHtml(String(value))}</span></p>`).join("")}</div></details>`;
 }
 
 function deriveResumeFileNameFromSource(source) {
@@ -4979,7 +5089,16 @@ function appendCandidateStageHistory(candidate, oldStage, newStage, movement = {
     {
       id: uid("fb"),
       feedbackDate: movementDate,
-      feedbackType: newStage === "Dropped" ? "Drop Reason" : newStage === "Interview" ? "Interview" : "Internal",
+      feedbackType:
+        newStage === "Dropped"
+          ? "Drop Reason"
+          : newStage === "On Hold"
+            ? "Hold Reason"
+            : newStage === "Pool"
+              ? "Pool Reason"
+              : newStage === "Interview"
+                ? "Interview"
+                : "Internal",
       feedback,
       clientFeedback: ["Submitted", "Client Review", "Interview", "Offer"].includes(newStage) ? feedback : "",
       dropReason: newStage === "Dropped" ? reason : "",
@@ -5042,8 +5161,15 @@ function appendCandidateStageHistory(candidate, oldStage, newStage, movement = {
   parsedData.lastActivityDate = movementDate;
   parsedData.nextFollowUpDate = sanitizeLine(movement.nextFollowUpDate || "", 20);
   parsedData.priority = sanitizeLine(movement.priority || "Medium", 20);
+  const updatedTracking = normalizeCandidateTracking({ ...candidate, parsedData });
+  updatedTracking.trackingStatus = normalizeTrackingStatus("", newStage);
+  parsedData.tracking = updatedTracking;
+  candidate.trackingStatus = updatedTracking.trackingStatus;
   candidate.parsedData = parsedData;
-  candidate.jobId = sanitizeLine(movement.jobId || candidate.jobId || "", 80).replace("__unassigned__", "");
+  candidate.jobId = sanitizeLine(
+    newStage === "Pool" ? movement.jobId || "" : movement.jobId || candidate.jobId || "",
+    80
+  ).replace("__unassigned__", "");
   candidate.recruiter = sanitizeLine(movement.recruiter || candidate.recruiter || "", 120);
   candidate.nextStepDate = parsedData.nextFollowUpDate || candidate.nextStepDate || "";
   candidate.nextStep = feedback || reason || candidate.nextStep || "";
@@ -5124,6 +5250,8 @@ function normalizeTrackingStatus(value, stage = "Identified") {
   const text = String(value || "").trim().toLowerCase();
   const direct = TRACKING_STATUS_OPTIONS.find((status) => status.toLowerCase() === text);
   if (direct) return direct;
+  if (stage === "On Hold") return "On Hold";
+  if (stage === "Pool") return "Pool";
   if (stage === "Dropped") return "Rejected";
   if (stage === "Onboarded") return "Onboarded";
   if (stage === "Offer") return "Offer";
@@ -5227,7 +5355,7 @@ function getOperationalCommandCenter(candidates, jobs) {
   const duplicatePending = state.candidates.filter((candidate) => candidate.status === "DUPLICATE_PENDING").length;
   const staleCandidates = activeCandidates.filter((candidate) => isCandidateStale(candidate)).length;
   const openJobs = jobs.filter((job) => isJobStatusActive(job.status)).length;
-  const submitted = activeCandidates.filter((candidate) => stageRank(candidate.stage) >= stageRank("Submitted")).length;
+  const submitted = activeCandidates.filter((candidate) => candidateHasReachedStage(candidate, "Submitted")).length;
   const interviewReady = activeCandidates.filter((candidate) => ["Qualified", "Submitted", "Interview"].includes(candidate.stage)).length;
 
   if (isFounder) {
@@ -5256,7 +5384,7 @@ function isCandidateStale(candidate) {
   const date = new Date(dateText);
   if (Number.isNaN(date.getTime())) return false;
   const ageMs = Date.now() - date.getTime();
-  return ageMs > 7 * 24 * 60 * 60 * 1000 && !["Onboarded", "Dropped"].includes(candidate.stage);
+  return ageMs > 7 * 24 * 60 * 60 * 1000 && !PIPELINE_INACTIVE_STAGES.has(candidate.stage);
 }
 
 function normalizePersonKey(value) {
@@ -5403,12 +5531,20 @@ function openStageMovementDialog(candidateId, nextStage) {
   const now = new Date();
   const previousContext = getPreviousStageContext(candidate);
   const currentUser = getCurrentUser();
+  const isPoolMovement = targetStage === "Pool";
 
   el.recordDialog.dataset.entity = "stage-movement";
   el.recordDialog.dataset.candidateId = candidate.id;
   el.recordDialog.dataset.nextStage = targetStage;
   el.recordDialogTitle.textContent = `Move ${candidate.name}: ${candidate.stage} → ${targetStage}`;
   el.recordFields.innerHTML = `
+    ${
+      targetStage === "On Hold"
+        ? `<p class="movement-guidance">Use On Hold when the linked requirement is temporarily paused. Record the reason and next follow-up date so the candidate is not lost.</p>`
+        : isPoolMovement
+          ? `<p class="movement-guidance">Use Pool for a suitable candidate who is not attached to an active requirement. Client, job, and follow-up are optional.</p>`
+          : ""
+    }
     <div class="movement-context-card">
       <strong>Previous stage context</strong>
       <span>Previous Stage: ${escapeHtml(candidate.stage || "-")}</span>
@@ -5429,8 +5565,8 @@ function openStageMovementDialog(candidateId, nextStage) {
       <input id="stage_move_time" name="movementTime" type="time" value="${escapeHtml(now.toTimeString().slice(0, 5))}" required />
     </div>
     <div class="dialog-field">
-      <label for="stage_client">Client *</label>
-      <select id="stage_client" name="clientId" required>
+      <label for="stage_client">Client${isPoolMovement ? " (Optional)" : " *"}</label>
+      <select id="stage_client" name="clientId" ${isPoolMovement ? "" : "required"}>
         <option value="">Select client</option>
         ${state.clients
           .map((client) => `<option value="${escapeHtml(client.id)}" ${candidate.jobId && findById(state.jobs, candidate.jobId)?.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`)
@@ -5447,8 +5583,8 @@ function openStageMovementDialog(candidateId, nextStage) {
       <input id="stage_end_client" name="endClient" type="text" placeholder="End client name" />
     </div>
     <div class="dialog-field">
-      <label for="stage_job">Job *</label>
-      <select id="stage_job" name="jobId" required>
+      <label for="stage_job">Job${isPoolMovement ? " (Optional)" : " *"}</label>
+      <select id="stage_job" name="jobId" ${isPoolMovement ? "" : "required"}>
         <option value="">Select job</option>
         ${state.jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${candidate.jobId === job.id ? "selected" : ""}>${escapeHtml(job.title)}</option>`).join("")}
         <option value="__unassigned__">Unassigned / manual movement</option>
@@ -5475,8 +5611,8 @@ function openStageMovementDialog(candidateId, nextStage) {
       <input id="stage_reason" name="reason" type="text" placeholder="Why is this movement happening?" required />
     </div>
     <div class="dialog-field">
-      <label for="stage_next_followup">Next Follow-up Date *</label>
-      <input id="stage_next_followup" name="nextFollowUpDate" type="date" required />
+      <label for="stage_next_followup">Next Follow-up Date${isPoolMovement ? " (Optional)" : " *"}</label>
+      <input id="stage_next_followup" name="nextFollowUpDate" type="date" ${isPoolMovement ? "" : "required"} />
     </div>
     <div class="dialog-field">
       <label for="stage_priority">Priority *</label>
@@ -5977,20 +6113,20 @@ function renderCandidateRow(item, isSelected = false) {
       role="button"
       aria-label="Open candidate profile for ${escapeHtml(item.name)}"
     >
-      <td>${escapeHtml(item.name)}<br /><span class="panel-subtitle">${escapeHtml(job?.title || "Unassigned")}</span></td>
-      <td>${escapeHtml(item.email || "-")}</td>
-      <td>${escapeHtml(item.phone || "-")}</td>
-      <td>${escapeHtml(currentRole || "-")}</td>
-      <td>${item.experienceYears == null ? "-" : `${item.experienceYears} yrs`}</td>
-      <td>${statusBadge(closureType)}</td>
-      <td>${statusBadge(trackingStatus)}</td>
-      <td>${overallRating == null ? "-" : `${overallRating}/10`}</td>
-      <td>${escapeHtml(item.location || "-")}</td>
-      <td>${escapeHtml(item.skills.join(", "))}</td>
-      <td><span class="badge ${stageClass}">${escapeHtml(stageLabel)}</span></td>
-      <td>${escapeHtml(item.source)}</td>
-      <td>${escapeHtml(item.recruiter)}</td>
-      <td>
+      <td data-label="Candidate">${escapeHtml(item.name)}<br /><span class="panel-subtitle">${escapeHtml(job?.title || "Unassigned")}</span></td>
+      <td data-label="Email">${escapeHtml(item.email || "-")}</td>
+      <td data-label="Phone">${escapeHtml(item.phone || "-")}</td>
+      <td data-label="Current Role">${escapeHtml(currentRole || "-")}</td>
+      <td data-label="Experience">${item.experienceYears == null ? "-" : `${item.experienceYears} yrs`}</td>
+      <td data-label="Closure">${statusBadge(closureType)}</td>
+      <td data-label="Tracking">${statusBadge(trackingStatus)}</td>
+      <td data-label="Rating">${overallRating == null ? "-" : `${overallRating}/10`}</td>
+      <td data-label="Location">${escapeHtml(item.location || "-")}</td>
+      <td data-label="Skills">${escapeHtml(item.skills.join(", "))}</td>
+      <td data-label="Stage"><span class="badge ${stageClass}">${escapeHtml(stageLabel)}</span></td>
+      <td data-label="Source">${escapeHtml(item.source)}</td>
+      <td data-label="Recruiter">${escapeHtml(item.recruiter)}</td>
+      <td data-label="Actions">
         <div class="table-actions">
           <button class="tool-btn" type="button" data-action="edit-candidate" data-candidate-id="${escapeHtml(item.id)}">Edit</button>
           ${
@@ -6012,17 +6148,19 @@ function renderCandidateSidePanel() {
     return `
       <aside class="panel candidate-side-panel candidate-side-empty">
         <h3 class="jobs-block-title">Candidate Profile</h3>
-        <p class="panel-subtitle">Select a candidate row to view editable profile fields and extracted CV JSON.</p>
+        <p class="panel-subtitle">Select a candidate row to view the profile, CV and recruitment history.</p>
       </aside>
     `;
   }
 
   const preview = buildCandidateFromDraft(selectedCandidate, draft);
   const deleted = isCandidateDeleted(selectedCandidate);
-  const jsonText = JSON.stringify(preview, null, 2);
   const linkedInUrl = normalizeLinkedInUrl(preview.linkedin || "");
   const resumeMeta = getCandidateResumeMeta(preview);
   const resumeDownloadUrl = getCandidateResumeDownloadUrl(preview);
+  const resumeExtraction = getCandidateResumeExtraction(preview);
+  const resumeVersions = getCandidateResumeVersions(preview);
+  const importSource = getCandidateImportSource(preview);
   const stageHistory = getCandidateStageHistory(preview);
   const timeline = getCandidateTimeline(preview);
   const submissions = getCandidateSubmissions(preview);
@@ -6229,38 +6367,55 @@ function renderCandidateSidePanel() {
 
       <div class="candidate-file-card">
         <div>
-          <h4>Original CV</h4>
-          <p>${escapeHtml(resumeMeta.fileName || "No original CV file stored yet")}</p>
-          <span>${escapeHtml(resumeMeta.fileType || "Upload through backend bulk upload/resume process to preserve original format")}</span>
+          <h4>Attached CV</h4>
+          <p>${escapeHtml(resumeMeta.fileName || "No CV attached")}</p>
+          <span>${escapeHtml(resumeMeta.fileType ? `${resumeMeta.fileType} · ${resumeVersions.length || 1} retained version(s)` : "Attach a PDF or DOCX when a genuine CV is available")}</span>
         </div>
         <div class="candidate-file-actions">
           ${
             resumeDownloadUrl
               ? `<button class="tool-btn link-tool-btn" type="button" data-action="preview-candidate-resume">Preview CV</button>
-                 <button class="tool-btn link-tool-btn" type="button" data-action="download-candidate-resume">Download CV</button>
-                 <button class="tool-btn" type="button" data-action="copy-resume-link">Copy Link</button>`
+                 <button class="tool-btn link-tool-btn" type="button" data-action="download-candidate-resume">Download exact CV</button>`
               : `<button class="tool-btn" type="button" disabled>No Stored CV</button>`
+          }
+          ${
+            deleted || !canWrite
+              ? ""
+              : `<label class="tool-btn candidate-upload-label">
+                   ${ui.candidates.resumeUploadInProgress ? "Uploading..." : resumeMeta.resumeUrl ? "Replace CV" : "Upload CV"}
+                   <input type="file" data-action="candidate-resume-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" ${ui.candidates.resumeUploadInProgress ? "disabled" : ""} />
+                 </label>`
           }
         </div>
       </div>
 
+      ${
+        importSource
+          ? `<div class="candidate-file-card candidate-import-source">
+               <div><h4>Import Source</h4><p>${escapeHtml(importSource.fileName)}</p><span>CSV import provenance only — this is not a candidate CV.</span></div>
+             </div>`
+          : ""
+      }
+
+      ${renderResumeExtraction(resumeExtraction)}
+      ${renderResumeVersions(resumeVersions)}
+      ${renderResumeDiagnostics(preview)}
+
       <div class="candidate-panel-actions">
         <button class="tool-btn" type="button" data-action="preview-candidate-profile">Preview Profile</button>
-        <button class="tool-btn" type="button" data-action="download-candidate-json">Download Candidate JSON</button>
+        <button class="tool-btn" type="button" data-action="download-candidate-json">Export Profile</button>
+        <button class="tool-btn" type="button" data-action="apply-resume-extraction" ${deleted || !canWrite || !resumeExtraction ? "disabled" : ""}>Apply Parsed Data to Draft</button>
         <button
           class="tool-btn"
           type="button"
           data-action="reparse-candidate-ai"
-          ${deleted || ui.candidates.reparseInProgress || !canWrite ? "disabled" : ""}
+          ${deleted || ui.candidates.reparseInProgress || !canWrite || !resumeMeta.resumeUrl ? "disabled" : ""}
         >
           ${ui.candidates.reparseInProgress ? "Re-parsing..." : "Re-parse with AI"}
         </button>
         <button class="tool-btn" type="button" data-action="reset-candidate-profile">Reset</button>
         ${deleted || !canWrite ? "" : `<button class="tool-btn primary" type="button" data-action="save-candidate-profile">Save Changes</button>`}
       </div>
-
-      <h4 class="candidate-json-title">Extracted CV JSON</h4>
-      <textarea class="candidate-json-view" readonly>${escapeHtml(jsonText)}</textarea>
     </aside>
   `;
 }
@@ -6371,7 +6526,7 @@ function buildCandidateFromDraft(baseCandidate, draft) {
   };
 }
 
-function downloadCandidateJson() {
+function exportSelectedCandidateProfile() {
   const selectedId = String(ui.candidates.selectedId || "");
   const draft = ui.candidates.editDraft;
   if (!selectedId || !draft) return;
@@ -6380,7 +6535,9 @@ function downloadCandidateJson() {
   if (!existing) return;
 
   const payload = buildCandidateFromDraft(existing, draft);
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const resumeMeta = getCandidateResumeMeta(payload);
+  const exportHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(payload.name || "Candidate Profile")}</title><style>body{font:15px/1.5 Arial,sans-serif;color:#172033;max-width:850px;margin:40px auto;padding:0 24px}h1{margin-bottom:4px}.meta{color:#526071}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin:24px 0}.block{border-top:1px solid #d8deea;padding-top:16px;margin-top:20px}@media print{body{margin:0}}</style></head><body><h1>${escapeHtml(payload.name || "Candidate")}</h1><p class="meta">Candidate profile exported from Agodly ATS</p><div class="grid"><div><strong>Email</strong><br>${escapeHtml(payload.email || "-")}</div><div><strong>Phone</strong><br>${escapeHtml(payload.phone || "-")}</div><div><strong>Current role</strong><br>${escapeHtml(payload.currentRole || "-")}</div><div><strong>Current company</strong><br>${escapeHtml(payload.currentCompany || "-")}</div><div><strong>Experience</strong><br>${payload.experienceYears == null ? "-" : `${escapeHtml(String(payload.experienceYears))} years`}</div><div><strong>Location</strong><br>${escapeHtml(payload.location || "-")}</div><div><strong>Education</strong><br>${escapeHtml(payload.education || "-")}</div><div><strong>Pipeline stage</strong><br>${escapeHtml(payload.stage || "-")}</div></div><section class="block"><h2>Skills</h2><p>${escapeHtml((payload.skills || []).join(", ") || "-")}</p></section><section class="block"><h2>Profile summary</h2><p>${escapeHtml(payload.profileSummary || "-")}</p></section><section class="block"><h2>CV</h2><p>${escapeHtml(resumeMeta.fileName || "No CV attached")}</p></section></body></html>`;
+  const blob = new Blob([exportHtml], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -6388,9 +6545,78 @@ function downloadCandidateJson() {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  anchor.download = `${safeName || "candidate"}-${payload.id}.json`;
+  anchor.download = `${safeName || "candidate"}-profile.html`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function applySelectedResumeExtractionToDraft() {
+  const candidate = findCandidateByIdAnywhere(ui.candidates.selectedId);
+  const extraction = getCandidateResumeExtraction(candidate);
+  if (!candidate || !extraction || !ui.candidates.editDraft) return;
+  const next = { ...ui.candidates.editDraft };
+  const assign = (field, value) => {
+    if (value !== undefined && value !== null && String(value).trim()) next[field] = String(value).trim();
+  };
+  assign("name", extraction.fullName);
+  assign("email", extraction.email);
+  assign("phone", extraction.phone);
+  assign("location", extraction.location);
+  assign("currentRole", extraction.currentRole);
+  assign("currentCompany", extraction.currentCompany);
+  assign("profileSummary", extraction.profileSummary);
+  assign("experienceYears", extraction.totalExperienceYears);
+  if (Array.isArray(extraction.education) && extraction.education.length) next.education = extraction.education.join(" | ");
+  if (Array.isArray(extraction.skills) && extraction.skills.length) next.skills = extraction.skills.join(", ");
+  assign("linkedin", extraction.linkedin);
+  ui.candidates.editDraft = next;
+  renderSection();
+  alert("Parsed CV data was applied to the editable draft. Review the fields and select Save Changes to keep them.");
+}
+
+async function uploadSelectedCandidateResume(file) {
+  const candidateId = String(ui.candidates.selectedId || "");
+  if (!candidateId || ui.candidates.resumeUploadInProgress) return;
+  const extension = getFileExtension(file?.name || "").toLowerCase();
+  if (!new Set(["pdf", "docx"]).has(extension)) {
+    alert("Only PDF and DOCX CV files are supported.");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert("CV file must be 10MB or smaller.");
+    return;
+  }
+  if (!ui.api.connected) {
+    alert("Backend is disconnected. CV files cannot be stored safely right now.");
+    return;
+  }
+
+  ui.candidates.resumeUploadInProgress = true;
+  renderSection();
+  try {
+    const form = new FormData();
+    form.append("resume", file);
+    const response = await fetch(buildApiUrl(API_ROUTES.candidateResume(candidateId)), {
+      method: "PUT",
+      headers: getAuthHeaders(),
+      body: form
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.success || !payload?.candidate) {
+      throw new Error(payload?.error?.message || "Could not store the CV");
+    }
+    const updated = mapApiCandidateToLocal(payload.candidate);
+    upsertCandidateInState(updated);
+    ui.candidates.selectedId = updated.id;
+    ui.candidates.editDraft = candidateDraftFromRecord(updated);
+    recordActivity("candidate", `CV version stored for ${updated.name}`);
+    saveAndRender();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Could not store the CV");
+  } finally {
+    ui.candidates.resumeUploadInProgress = false;
+    renderSection();
+  }
 }
 
 async function copySelectedCandidateLinkedIn() {
@@ -6467,10 +6693,6 @@ function openSelectedCandidateProfilePreview() {
       </div>
       <p class="profile-summary"><strong>Skills:</strong> ${escapeHtml((candidate.skills || []).join(", ") || "-")}</p>
       <p class="profile-summary"><strong>Summary:</strong> ${escapeHtml(candidate.profileSummary || "No summary added yet.")}</p>
-    </section>
-    <section class="profile-block">
-      <h4>Clean JSON Preview</h4>
-      <textarea class="candidate-json-view" readonly>${escapeHtml(JSON.stringify(candidate, null, 2))}</textarea>
     </section>
   `;
   el.candidateProfileDialog.showModal();
@@ -6704,6 +6926,7 @@ async function moveCandidateStage(candidateId, nextStage, movement = {}) {
 async function submitStageMovementDialog(data) {
   const candidateId = String(el.recordDialog.dataset.candidateId || "").trim();
   const nextStage = String(el.recordDialog.dataset.nextStage || "").trim();
+  const isPoolMovement = nextStage === "Pool";
   const attachmentInput = el.recordForm.querySelector("input[name='attachment']");
   const movement = {
     movementDate: String(data.movementDate || "").trim(),
@@ -6723,17 +6946,20 @@ async function submitStageMovementDialog(data) {
     attachment: attachmentInput?.files?.[0] || null
   };
 
-  const missing = [
+  const requiredFields = [
     ["Movement Date", movement.movementDate],
     ["Movement Time", movement.movementTime],
-    ["Job", movement.jobId || data.jobId],
     ["Recruiter", movement.recruiter],
     ["Feedback", movement.feedback],
     ["Reason", movement.reason],
-    ["Next Follow-up Date", movement.nextFollowUpDate],
     ["Priority", movement.priority],
     ["Movement Owner", movement.movementOwner]
-  ].filter(([, value]) => !String(value || "").trim());
+  ];
+  if (!isPoolMovement) {
+    requiredFields.push(["Job", movement.jobId || data.jobId]);
+    requiredFields.push(["Next Follow-up Date", movement.nextFollowUpDate]);
+  }
+  const missing = requiredFields.filter(([, value]) => !String(value || "").trim());
 
   if (missing.length) {
     alert(`Complete mandatory fields before moving stage: ${missing.map(([label]) => label).join(", ")}`);
@@ -7282,8 +7508,20 @@ function matchesSearch(text) {
 }
 
 function stageRank(stage) {
-  const index = PIPELINE_STAGES.indexOf(stage);
-  return index === -1 ? 0 : index;
+  if (PIPELINE_DISPOSITION_STAGES.has(stage)) return -1;
+  return PIPELINE_PROGRESS_RANK.get(stage) ?? 0;
+}
+
+function candidateHasReachedStage(candidate, targetStage) {
+  const targetRank = stageRank(targetStage);
+  if (targetRank < 0) return candidate?.stage === targetStage;
+  if (!PIPELINE_DISPOSITION_STAGES.has(candidate?.stage)) {
+    return stageRank(candidate?.stage) >= targetRank;
+  }
+
+  return getCandidateStageHistory(candidate).some(
+    (movement) => stageRank(movement.oldStage) >= targetRank || stageRank(movement.newStage) >= targetRank
+  );
 }
 
 function normalizeJobStatus(value) {

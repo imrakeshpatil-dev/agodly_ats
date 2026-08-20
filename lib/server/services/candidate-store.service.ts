@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 
+import { normalizePipelineStage } from "../constants/pipeline";
 import { AppError } from "../middleware/error.middleware";
 import { createId } from "../utils/id";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
@@ -341,7 +342,7 @@ class CandidateStoreService {
     }
 
     if (patch.stage !== undefined) {
-      candidate.stage = patch.stage.trim() || "Identified";
+      candidate.stage = normalizePipelineStage(patch.stage);
     }
 
     if (patch.jobId !== undefined) {
@@ -774,7 +775,7 @@ const normalizeCandidateInput = (input: CandidateInput): CandidateInput => {
     email: normalizeEmail(normalized.email || input.email || ""),
     phone: sanitizeLine(normalized.phone || input.phone || "", 24),
     recruiter: sanitizeLine(input.recruiter || "Bulk Upload", 60) || "Bulk Upload",
-    stage: sanitizeLine(input.stage || "Identified", 60) || "Identified",
+    stage: normalizePipelineStage(input.stage),
     jobId: sanitizeLine(input.jobId || "", 80),
     currentRole: sanitizeLine(normalized.currentRole || input.currentRole || "", 90),
     skills: sanitizeStringList(normalized.skills.length ? normalized.skills : input.skills, 24, 32),

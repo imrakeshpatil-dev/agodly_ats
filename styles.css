@@ -50,7 +50,7 @@ select {
   --sidebar-width: 252px;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   transition: grid-template-columns 170ms ease;
   perspective: none;
 }
@@ -67,7 +67,10 @@ select {
   flex-direction: column;
   gap: 0.85rem;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
-  position: relative;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .sidebar::after {
@@ -412,7 +415,8 @@ select {
 
 .workspace {
   padding: 1rem 1rem 1.2rem;
-  overflow-x: auto;
+  min-width: 0;
+  overflow-x: hidden;
   position: relative;
 }
 
@@ -551,6 +555,7 @@ select {
   margin-top: 0.7rem;
   display: grid;
   gap: 0.7rem;
+  min-width: 0;
 }
 
 .panel {
@@ -660,6 +665,100 @@ select {
   flex-wrap: wrap;
   gap: 0.45rem;
   justify-content: flex-end;
+}
+
+.candidate-upload-label {
+  cursor: pointer;
+}
+
+.candidate-upload-label input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.candidate-import-source {
+  border-style: dashed;
+}
+
+.resume-extraction-card,
+.resume-version-card {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #0f1d30;
+  padding: 0.78rem;
+  margin: 0.75rem 0;
+}
+
+.resume-extraction-card h4,
+.resume-extraction-card p,
+.resume-version-card p {
+  margin: 0;
+}
+
+.resume-extraction-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.resume-extraction-head span,
+.resume-version-card summary {
+  color: #a9cfff;
+  font-weight: 700;
+}
+
+.resume-extraction-grid,
+.resume-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.resume-extraction-grid > div,
+.resume-diagnostic-grid > p {
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.55rem;
+}
+
+.resume-extraction-grid strong,
+.resume-extraction-grid span,
+.resume-diagnostic-grid strong,
+.resume-diagnostic-grid span,
+.resume-version-list strong,
+.resume-version-list span {
+  display: block;
+}
+
+.resume-extraction-grid span,
+.resume-diagnostic-grid span,
+.resume-version-list span,
+.resume-extraction-note {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.resume-extraction-note {
+  margin-top: 0.7rem !important;
+}
+
+.resume-version-card summary {
+  cursor: pointer;
+}
+
+.resume-version-list p {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.resume-version-list p:last-child {
+  border-bottom: 0;
 }
 
 .metrics-grid {
@@ -1042,6 +1141,10 @@ table {
   border-collapse: collapse;
 }
 
+.candidate-table {
+  min-width: 1500px;
+}
+
 th,
 td {
   text-align: left;
@@ -1191,9 +1294,35 @@ tbody tr.leaderboard-self td {
 
 .candidates-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.9fr) minmax(360px, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(400px, 31vw, 520px);
   gap: 0.7rem;
   align-items: start;
+  min-width: 0;
+}
+
+.candidates-layout > * {
+  min-width: 0;
+}
+
+.candidate-controls {
+  align-items: end;
+  margin-top: 0.7rem;
+}
+
+.candidate-controls .dialog-field {
+  flex: 1 1 140px;
+}
+
+.candidate-results-bar {
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.7rem 0 0.45rem;
+}
+
+.candidate-pagination {
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.65rem;
 }
 
 .candidate-row {
@@ -1212,6 +1341,9 @@ tbody tr.leaderboard-self td {
 .candidate-side-panel {
   position: sticky;
   top: 0.7rem;
+  max-height: calc(100vh - 1.4rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .candidate-side-empty {
@@ -1223,6 +1355,17 @@ tbody tr.leaderboard-self td {
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
+}
+
+.movement-guidance {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px solid rgba(95, 174, 255, 0.32);
+  border-radius: 12px;
+  background: rgba(95, 174, 255, 0.09);
+  color: #d8eaff;
+  padding: 0.68rem 0.75rem;
+  line-height: 1.45;
 }
 
 .candidate-edit-grid {
@@ -1270,6 +1413,13 @@ tbody tr.leaderboard-self td {
   font-family: "JetBrains Mono", "Menlo", monospace;
   font-size: 0.79rem;
   resize: vertical;
+}
+
+@media (max-width: 640px) {
+  .resume-extraction-grid,
+  .resume-diagnostic-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .jobs-header {
@@ -2211,6 +2361,32 @@ button:focus-visible {
   .candidates-layout {
     grid-template-columns: 1fr;
   }
+
+  .candidate-side-empty {
+    display: none;
+  }
+
+  .candidate-side-panel:not(.candidate-side-empty) {
+    position: fixed;
+    top: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    z-index: 30;
+    width: min(560px, calc(100vw - 1.5rem));
+    max-height: none;
+    overflow-y: auto;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  }
+
+  .candidate-side-panel:not(.candidate-side-empty) .candidate-side-head {
+    position: sticky;
+    top: -0.92rem;
+    z-index: 4;
+    margin: -0.92rem -0.92rem 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 0.92rem;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -2355,6 +2531,12 @@ button:focus-visible {
   .dialog-actions button,
   .profile-dialog-head button {
     width: 100%;
+    min-height: 44px;
+  }
+
+  .candidate-side-head .tool-btn {
+    width: auto;
+    min-width: 72px;
   }
 
   .auth-guard-panel {
@@ -2402,6 +2584,96 @@ button:focus-visible {
 
   .candidate-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .candidate-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+
+  .candidate-controls .dialog-field {
+    min-width: 0;
+  }
+
+  .candidate-controls .dialog-field:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .candidate-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .candidate-table,
+  .candidate-table tbody {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .candidate-table thead {
+    display: none;
+  }
+
+  .candidate-table .candidate-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: hidden;
+    margin-bottom: 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #0d1b2f;
+  }
+
+  .candidate-table .candidate-row td {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+    border-bottom: 1px solid var(--line-soft);
+    background: transparent;
+    padding: 0.62rem;
+  }
+
+  .candidate-table .candidate-row td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  .candidate-table .candidate-row td:first-child,
+  .candidate-table .candidate-row td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .candidate-table .candidate-row td:nth-child(6),
+  .candidate-table .candidate-row td:nth-child(7),
+  .candidate-table .candidate-row td:nth-child(8),
+  .candidate-table .candidate-row td:nth-child(10),
+  .candidate-table .candidate-row td:nth-child(12) {
+    display: none;
+  }
+
+  .candidate-table tbody tr:not(.candidate-row),
+  .candidate-table tbody tr:not(.candidate-row) td {
+    display: block;
+    width: 100%;
+  }
+
+  .candidate-pagination {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
+
+  .candidate-side-panel:not(.candidate-side-empty) {
+    inset: 0.35rem;
+    width: auto;
+    border-radius: 14px;
   }
 
   .inline-copy-row {
