@@ -2,11 +2,13 @@ import { Request, Response } from "express";
 import { promises as fs } from "fs";
 import path from "path";
 
+import { isPipelineStage } from "../constants/pipeline";
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 import { isFounderRole } from "../services/auth.service";
 import { authorizationService, type AuthorizationContext } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
+import { candidateResumeService } from "../services/candidate-resume.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
 import {
   classifyResumeAIError,
@@ -15,7 +17,6 @@ import {
 } from "../services/resumeAIParser";
 import { extractTextFromDOCX, extractTextFromPDF } from "../services/resumeTextExtractor";
 import { CandidateInput, CandidateProfileUpdate, CandidateRecord } from "../types/candidate";
-import { uniqueStrings } from "../utils/text";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
 
@@ -81,6 +82,10 @@ export const createCandidate = async (req: Request, res: Response): Promise<void
     ? authUser.name || authUser.email || "Unassigned"
     : requestedRecruiter || authUser?.name || authUser?.email || "Unassigned";
   const now = new Date().toISOString();
+  const requestedStage = toOptionalString(body.stage) || "Identified";
+  if (!isPipelineStage(requestedStage)) {
+    throw new AppError("Invalid candidate pipeline stage", 400);
+  }
 
   const candidateInput: CandidateInput = {
     ownerUserId,
@@ -90,7 +95,7 @@ export const createCandidate = async (req: Request, res: Response): Promise<void
     email: toOptionalString(body.email) || "",
     phone: toOptionalString(body.phone) || "",
     recruiter,
-    stage: toOptionalString(body.stage) || "Identified",
+    stage: requestedStage,
     jobId: toOptionalString(body.jobId) || "",
     currentRole: toOptionalString(body.currentRole) || "",
     skills: toOptionalStringArray(body.skills) || [],
@@ -194,6 +199,28 @@ export const downloadCandidateResume = async (req: Request, res: Response): Prom
   res.download(absolutePath, getOriginalResumeFileName(candidate));
 };
 
+export const attachCandidateResume = async (req: Request, res: Response): Promise<void> => {
+  const candidateId = String(req.params.id || "").trim();
+  const file = req.file as Express.Multer.File | undefined;
+  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
+  if (!candidateId) throw new AppError("Candidate id is required", 400);
+  if (!file) throw new AppError("CV file is required", 400);
+  if (!authUser) throw new AppError("Unauthorized", 401);
+
+  const context = await getAuthorizationContext(req);
+  const candidate = await getCandidateOrDeny(req, context, candidateId, "candidate-resume-upload");
+  await assertCanMutateCandidate(req, candidate);
+
+  const patch = await candidateResumeService.storeAndBuildPatch(candidate, file, {
+    id: authUser.id,
+    name: authUser.name,
+    email: authUser.email
+  });
+  const updated = await candidateStoreService.updateCandidateProfile(candidateId, patch);
+
+  res.status(200).json({ success: true, candidate: updated });
+};
+
 export const mergeDuplicate = async (req: Request, res: Response): Promise<void> => {
   const { primaryCandidateId, duplicateCandidateId } = req.body as {
     primaryCandidateId?: string;
@@ -281,6 +308,9 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
   const accessContext = await getAuthorizationContext(req);
   const existingCandidate = await getCandidateOrDeny(req, accessContext, candidateId, "candidate-update");
   const context = await assertCanMutateCandidate(req, existingCandidate);
+  if (patch.stage !== undefined && !isPipelineStage(patch.stage)) {
+    throw new AppError("Invalid candidate pipeline stage", 400);
+  }
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
   const targetOwnerId = patch.assignedRecruiterId ?? patch.ownerUserId;
   const changesOwnership =
@@ -508,9 +538,6 @@ const getOriginalResumeFileName = (candidate: CandidateRecord): string => {
     if (fileName) return fileName;
   }
 
-  const uploadFileName = String(parsedData.uploadFileName || "").trim();
-  if (uploadFileName) return uploadFileName;
-
   return path.basename(String(candidate.resumeUrl || "resume"));
 };
 
@@ -627,37 +654,7 @@ const buildPatchFromAiResult = (
 ): CandidateProfileUpdate => {
   const parsed = result.data;
   const normalized = normalizeResumeExtraction(parsed, resumeText);
-  const skills = uniqueStrings(normalized.skills || []);
-  const currentRole = String(normalized.currentRole || existing.currentRole || "").trim();
-  const summary = [
-    currentRole ? `Role: ${currentRole}` : "",
-    normalized.currentCompany ? `Company: ${normalized.currentCompany}` : "",
-    normalized.totalExperienceYears != null ? `Experience: ${normalized.totalExperienceYears} years` : "",
-    skills.length ? `Skills: ${skills.slice(0, 10).join(", ")}` : ""
-  ]
-    .filter(Boolean)
-    .join(" | ")
-    .trim();
-
-  const previousKeywords = Array.isArray(existing.keywords) ? existing.keywords : [];
-  const keywords = uniqueStrings([
-    ...previousKeywords,
-    ...normalized.keywords
-  ]);
-
   return {
-    name: normalized.fullName || existing.name,
-    email: normalized.email || existing.email,
-    phone: normalized.phone || existing.phone,
-    location: normalized.location || existing.location,
-    currentRole: currentRole || existing.currentRole,
-    currentCompany: normalized.currentCompany || existing.currentCompany,
-    education: normalized.education?.length ? normalized.education.join(" | ") : existing.education,
-    skills: skills.length ? skills : existing.skills,
-    experienceYears:
-      normalized.totalExperienceYears != null ? normalized.totalExperienceYears : existing.experienceYears,
-    profileSummary: normalized.profileSummary || summary || existing.profileSummary,
-    keywords,
     parsingStatus: "COMPLETED",
     parsedData: {
       ...(existing.parsedData || {}),
@@ -665,7 +662,13 @@ const buildPatchFromAiResult = (
       ...result.metadata,
       reparsedAt: new Date().toISOString(),
       resumeText: resumeText.slice(0, 40000),
-      ...normalized
+      resumeExtraction: {
+        ...normalized,
+        parser: "AI_REPARSE",
+        ...result.metadata,
+        status: "COMPLETED",
+        parsedAt: new Date().toISOString()
+      }
     }
   };
 };
