@@ -54,4 +54,7 @@ test("pipeline board supports visible and gesture-based horizontal navigation", 
   assert.match(styles, /\.pipeline-board\.is-dragging/);
   assert.match(styles, /touch-action: pan-x pan-y/);
   assert.match(styles, /\.pipeline-board::-webkit-scrollbar/);
+  assert.match(styles, /\.section-container \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /\.section-container > \.panel \{[\s\S]*min-width: 0/);
+  assert.match(styles, /\.pipeline-board \{[\s\S]*max-width: 100%/);
 });
