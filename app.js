@@ -43,6 +43,7 @@ const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "pdf", "doc", "docx"]);
 const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
+let pipelineDragState = null;
 
 const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
@@ -639,6 +640,11 @@ function bindEvents() {
   el.sectionContainer?.addEventListener("change", onSectionChange);
   el.sectionContainer?.addEventListener("input", onSectionInput);
   el.sectionContainer?.addEventListener("keydown", onSectionKeydown);
+  el.sectionContainer?.addEventListener("wheel", onSectionWheel, { passive: false });
+  el.sectionContainer?.addEventListener("pointerdown", onSectionPointerDown);
+  el.sectionContainer?.addEventListener("pointermove", onSectionPointerMove);
+  el.sectionContainer?.addEventListener("pointerup", endPipelinePointerScroll);
+  el.sectionContainer?.addEventListener("pointercancel", endPipelinePointerScroll);
   el.sectionContainer?.addEventListener("dragover", onSectionDragOver);
   el.sectionContainer?.addEventListener("dragleave", onSectionDragLeave);
   el.sectionContainer?.addEventListener("drop", onSectionDrop);
@@ -684,6 +690,11 @@ function onSectionClick(event) {
   if (action === "clear-pipeline-filter") {
     ui.pipelineFilter = "all";
     renderSection();
+    return;
+  }
+
+  if (action === "pipeline-scroll") {
+    scrollPipelineBoard(actionNode.dataset.direction || "right");
     return;
   }
 
@@ -1286,6 +1297,12 @@ function onSectionInput(event) {
 }
 
 function onSectionKeydown(event) {
+  if (event.target.matches(".pipeline-board") && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    event.preventDefault();
+    scrollPipelineBoard(event.key === "ArrowLeft" ? "left" : "right");
+    return;
+  }
+
   if (event.target.matches("[data-dropzone='bulk-upload']")) {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
@@ -1325,6 +1342,58 @@ function onSectionKeydown(event) {
   const skillType = event.target.dataset.skillType;
   if (!skillType) return;
   addJobSkillFromInput(skillType);
+}
+
+function scrollPipelineBoard(direction) {
+  const board = el.sectionContainer?.querySelector(".pipeline-board");
+  if (!board) return;
+  const step = Math.max(280, Math.round(board.clientWidth * 0.78));
+  board.scrollBy({ left: direction === "left" ? -step : step, behavior: "smooth" });
+  board.focus({ preventScroll: true });
+}
+
+function onSectionWheel(event) {
+  const board = event.target.closest(".pipeline-board");
+  if (!board || board.scrollWidth <= board.clientWidth) return;
+
+  const horizontalIntent = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const overScrollableColumn = Boolean(event.target.closest(".pipeline-col"));
+  if (!horizontalIntent && overScrollableColumn) return;
+
+  const delta = horizontalIntent && event.deltaX ? event.deltaX : event.deltaY;
+  if (!delta) return;
+  event.preventDefault();
+  board.scrollLeft += delta;
+}
+
+function onSectionPointerDown(event) {
+  if (event.button !== 0) return;
+  const board = event.target.closest(".pipeline-board");
+  if (!board || board.scrollWidth <= board.clientWidth) return;
+  if (event.target.closest("button, a, input, select, textarea, .pipeline-item")) return;
+
+  pipelineDragState = {
+    board,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startScrollLeft: board.scrollLeft
+  };
+  board.setPointerCapture?.(event.pointerId);
+  board.classList.add("is-dragging");
+}
+
+function onSectionPointerMove(event) {
+  if (!pipelineDragState || pipelineDragState.pointerId !== event.pointerId) return;
+  const distance = event.clientX - pipelineDragState.startX;
+  if (Math.abs(distance) > 3) event.preventDefault();
+  pipelineDragState.board.scrollLeft = pipelineDragState.startScrollLeft - distance;
+}
+
+function endPipelinePointerScroll(event) {
+  if (!pipelineDragState || pipelineDragState.pointerId !== event.pointerId) return;
+  pipelineDragState.board.releasePointerCapture?.(event.pointerId);
+  pipelineDragState.board.classList.remove("is-dragging");
+  pipelineDragState = null;
 }
 
 function onSectionDragOver(event) {
@@ -3655,8 +3724,13 @@ function renderPipelineSection() {
           ${PIPELINE_STAGES.map((stage) => `<option value="${stage}" ${ui.pipelineFilter === stage ? "selected" : ""}>${stage}</option>`).join("")}
         </select>
         <button class="tool-btn" type="button" data-action="clear-pipeline-filter">Clear Filter</button>
+        <div class="pipeline-scroll-controls" aria-label="Pipeline horizontal navigation">
+          <button class="tool-btn" type="button" data-action="pipeline-scroll" data-direction="left" aria-label="Scroll pipeline left">← Left</button>
+          <span>Drag, swipe, Shift + wheel, or use arrow keys</span>
+          <button class="tool-btn" type="button" data-action="pipeline-scroll" data-direction="right" aria-label="Scroll pipeline right">Right →</button>
+        </div>
       </div>
-      <div class="pipeline-board">${board}</div>
+      <div class="pipeline-board" tabindex="0" role="region" aria-label="Pipeline stages. Scroll horizontally to view all stages.">${board}</div>
     </section>
   `;
 }

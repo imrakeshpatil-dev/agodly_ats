@@ -1292,6 +1292,18 @@ tbody tr.leaderboard-self td {
   padding: 0.45rem 0.58rem;
 }
 
+.pipeline-scroll-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.pipeline-scroll-controls span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 .candidates-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(400px, 31vw, 520px);
@@ -1825,6 +1837,32 @@ tr.is-selected-row td {
   padding: 0.2rem 0.15rem 0.85rem;
   scroll-snap-type: x proximity;
   scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #5b86b8 #0a1526;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+  cursor: grab;
+}
+
+.pipeline-board:focus-visible {
+  outline: 2px solid rgba(91, 181, 255, 0.72);
+  outline-offset: 3px;
+}
+
+.pipeline-board.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+  scroll-snap-type: none;
+}
+
+.pipeline-board::-webkit-scrollbar {
+  height: 14px;
+}
+
+.pipeline-board::-webkit-scrollbar-thumb {
+  border: 3px solid #0a1526;
+  background: #5b86b8;
 }
 
 .bulk-toolbar {
@@ -2566,6 +2604,16 @@ button:focus-visible {
 
   .pipeline-board {
     grid-auto-columns: minmax(245px, 86vw);
+  }
+
+  .pipeline-scroll-controls {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .pipeline-scroll-controls span {
+    display: none;
   }
 
   .pipeline-col {

@@ -41,3 +41,17 @@ test("candidate page has responsive list, card, and profile-drawer styles", () =
   assert.match(styles, /\.candidate-table \.candidate-row td::before/);
   assert.match(styles, /grid-template-columns: var\(--sidebar-width\) minmax\(0, 1fr\)/);
 });
+
+test("pipeline board supports visible and gesture-based horizontal navigation", () => {
+  const browser = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
+  const styles = fs.readFileSync(path.join(projectRoot, "styles.css"), "utf8");
+
+  assert.match(browser, /data-action="pipeline-scroll" data-direction="left"/);
+  assert.match(browser, /data-action="pipeline-scroll" data-direction="right"/);
+  assert.match(browser, /function onSectionWheel\(event\)/);
+  assert.match(browser, /function onSectionPointerDown\(event\)/);
+  assert.match(browser, /tabindex="0" role="region" aria-label="Pipeline stages/);
+  assert.match(styles, /\.pipeline-board\.is-dragging/);
+  assert.match(styles, /touch-action: pan-x pan-y/);
+  assert.match(styles, /\.pipeline-board::-webkit-scrollbar/);
+});
