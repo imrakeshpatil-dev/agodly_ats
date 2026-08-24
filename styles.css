@@ -1332,10 +1332,14 @@ tbody tr.leaderboard-self td {
 
 .candidates-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(400px, 31vw, 520px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.7rem;
   align-items: start;
   min-width: 0;
+}
+
+.candidates-layout.has-profile {
+  grid-template-columns: minmax(0, 1fr) clamp(420px, 32vw, 560px);
 }
 
 .candidates-layout > * {
@@ -1345,6 +1349,24 @@ tbody tr.leaderboard-self td {
 .candidate-controls {
   align-items: end;
   margin-top: 0.7rem;
+}
+
+.candidate-list-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.candidate-open-hint {
+  flex: 0 0 auto;
+  border: 1px solid rgba(74, 168, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(74, 168, 255, 0.08);
+  color: #b9d9ff;
+  padding: 0.36rem 0.58rem;
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .candidate-controls .dialog-field {
@@ -1376,6 +1398,11 @@ tbody tr.leaderboard-self td {
   background: rgba(44, 136, 246, 0.22);
 }
 
+.candidate-row:focus-visible {
+  outline: 2px solid rgba(91, 181, 255, 0.82);
+  outline-offset: -2px;
+}
+
 .candidate-side-panel {
   position: sticky;
   top: 0.7rem;
@@ -1384,15 +1411,25 @@ tbody tr.leaderboard-self td {
   overscroll-behavior: contain;
 }
 
-.candidate-side-empty {
-  min-height: 240px;
-}
-
 .candidate-side-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
+}
+
+.candidate-profile-eyebrow {
+  display: block;
+  margin-bottom: 0.12rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.candidate-profile-close {
+  flex: 0 0 auto;
 }
 
 .movement-guidance {
@@ -2672,11 +2709,7 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .candidate-side-empty {
-    display: none;
-  }
-
-  .candidate-side-panel:not(.candidate-side-empty) {
+  .candidate-side-panel {
     position: fixed;
     top: 0.75rem;
     right: 0.75rem;
@@ -2688,7 +2721,7 @@ button:focus-visible {
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
   }
 
-  .candidate-side-panel:not(.candidate-side-empty) .candidate-side-head {
+  .candidate-side-panel .candidate-side-head {
     position: sticky;
     top: -0.92rem;
     z-index: 4;
@@ -2849,6 +2882,15 @@ button:focus-visible {
     min-width: 72px;
   }
 
+  .candidate-list-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .candidate-open-hint {
+    align-self: flex-start;
+  }
+
   .auth-guard-panel {
     min-height: 360px;
   }
@@ -2999,7 +3041,7 @@ button:focus-visible {
     grid-template-columns: 1fr auto 1fr;
   }
 
-  .candidate-side-panel:not(.candidate-side-empty) {
+  .candidate-side-panel {
     inset: 0.35rem;
     width: auto;
     border-radius: 14px;

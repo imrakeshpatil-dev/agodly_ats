@@ -37,7 +37,13 @@ test("candidate page has responsive list, card, and profile-drawer styles", () =
   assert.match(browser, /class="table-wrap candidate-table-wrap"/);
   assert.match(browser, /class="candidate-table"/);
   assert.match(browser, /data-label="Candidate"/);
-  assert.match(styles, /\.candidate-side-panel:not\(\.candidate-side-empty\)/);
+  assert.match(browser, /candidates-layout \$\{hasSelectedCandidate \? "has-profile" : "is-list-only"\}/);
+  assert.match(browser, /hasSelectedCandidate \? renderCandidateSidePanel\(\) : ""/);
+  assert.match(browser, /function closeCandidateSidePanel\(\)/);
+  assert.match(browser, /event\.key === "Escape" && ui\.activeSection === "candidates"/);
+  assert.match(styles, /\.candidates-layout \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /\.candidates-layout\.has-profile \{[\s\S]*grid-template-columns:/);
+  assert.doesNotMatch(browser, /candidate-side-empty/);
   assert.match(styles, /\.candidate-table \.candidate-row td::before/);
   assert.match(styles, /grid-template-columns: var\(--sidebar-width\) minmax\(0, 1fr\)/);
 });

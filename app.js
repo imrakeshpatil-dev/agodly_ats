@@ -838,6 +838,7 @@ function onSectionClick(event) {
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
     renderSection();
+    focusCandidateSidePanel();
     return;
   }
 
@@ -853,6 +854,7 @@ function onSectionClick(event) {
     ui.candidates.inFlightQueryKey = "";
     ui.candidates.lastQueryKey = "";
     render();
+    focusCandidateSidePanel();
     return;
   }
 
@@ -863,6 +865,7 @@ function onSectionClick(event) {
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
     renderSection();
+    focusCandidateSidePanel();
     return;
   }
 
@@ -915,9 +918,7 @@ function onSectionClick(event) {
   }
 
   if (action === "close-candidate-sidepanel") {
-    ui.candidates.selectedId = "";
-    ui.candidates.editDraft = null;
-    renderSection();
+    closeCandidateSidePanel();
     return;
   }
 
@@ -1463,6 +1464,12 @@ function onSectionInput(event) {
 }
 
 function onSectionKeydown(event) {
+  if (event.key === "Escape" && ui.activeSection === "candidates" && ui.candidates.selectedId) {
+    event.preventDefault();
+    closeCandidateSidePanel();
+    return;
+  }
+
   if (event.target.matches(".pipeline-board") && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
     event.preventDefault();
     scrollPipelineBoard(event.key === "ArrowLeft" ? "left" : "right");
@@ -1499,6 +1506,7 @@ function onSectionKeydown(event) {
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
     renderSection();
+    focusCandidateSidePanel();
     return;
   }
 
@@ -2736,12 +2744,18 @@ function renderCandidatesSection() {
     ui.candidates.selectedId = "";
     ui.candidates.editDraft = null;
   }
+  const hasSelectedCandidate = Boolean(ui.candidates.selectedId && ui.candidates.editDraft);
 
   return `
-    <section class="candidates-layout">
+    <section class="candidates-layout ${hasSelectedCandidate ? "has-profile" : "is-list-only"}">
       <article class="panel candidate-list-panel">
-        <h2 class="panel-title">Candidates</h2>
-        <p class="panel-subtitle">Edit candidates or move them to Deleted Candidates with double confirmation.</p>
+        <div class="candidate-list-head">
+          <div>
+            <h2 class="panel-title">Candidates</h2>
+            <p class="panel-subtitle">Browse the full list, then select a candidate to view or edit their profile.</p>
+          </div>
+          <span class="candidate-open-hint">Select any row to open profile →</span>
+        </div>
         <div class="table-actions candidate-controls">
           <button class="tool-btn ${view === "active" ? "primary" : ""}" type="button" data-action="candidates-view" data-view="active">
             Active (${activeCount})
@@ -2836,7 +2850,7 @@ function renderCandidatesSection() {
         </div>
       </article>
 
-      ${renderCandidateSidePanel()}
+      ${hasSelectedCandidate ? renderCandidateSidePanel() : ""}
     </section>
   `;
 }
@@ -6567,6 +6581,7 @@ function renderCandidateRow(item, isSelected = false) {
       data-candidate-id="${escapeHtml(item.id)}"
       tabindex="0"
       role="button"
+      ${isSelected ? `aria-expanded="true" aria-controls="candidateProfilePanel"` : `aria-expanded="false"`}
       aria-label="Open candidate profile for ${escapeHtml(item.name)}"
     >
       <td data-label="Candidate">${escapeHtml(item.name)}<br /><span class="panel-subtitle">${escapeHtml(job?.title || "Unassigned")}</span></td>
@@ -6601,12 +6616,7 @@ function renderCandidateSidePanel() {
   const draft = ui.candidates.editDraft;
 
   if (!selectedCandidate || !draft) {
-    return `
-      <aside class="panel candidate-side-panel candidate-side-empty">
-        <h3 class="jobs-block-title">Candidate Profile</h3>
-        <p class="panel-subtitle">Select a candidate row to view the profile, CV and recruitment history.</p>
-      </aside>
-    `;
+    return "";
   }
 
   const preview = buildCandidateFromDraft(selectedCandidate, draft);
@@ -6623,10 +6633,13 @@ function renderCandidateSidePanel() {
   const canWrite = canCurrentUserWriteRecords();
 
   return `
-    <aside class="panel candidate-side-panel">
+    <aside class="panel candidate-side-panel" id="candidateProfilePanel" aria-labelledby="candidateProfileTitle">
       <div class="candidate-side-head">
-        <h3 class="jobs-block-title">Candidate Profile</h3>
-        <button class="tool-btn" type="button" data-action="close-candidate-sidepanel">Close</button>
+        <div>
+          <span class="candidate-profile-eyebrow">Candidate workspace</span>
+          <h3 class="jobs-block-title" id="candidateProfileTitle">Candidate Profile</h3>
+        </div>
+        <button class="tool-btn candidate-profile-close" type="button" data-action="close-candidate-sidepanel" aria-label="Close candidate profile">Close ×</button>
       </div>
       <p class="panel-subtitle">Editing: ${escapeHtml(selectedCandidate.name)}</p>
       ${deleted ? `<p class="panel-subtitle">This profile is in Deleted Candidates.</p>` : ""}
@@ -6874,6 +6887,25 @@ function renderCandidateSidePanel() {
       </div>
     </aside>
   `;
+}
+
+function focusCandidateSidePanel() {
+  window.requestAnimationFrame(() => {
+    el.sectionContainer?.querySelector("[data-action='close-candidate-sidepanel']")?.focus({ preventScroll: true });
+  });
+}
+
+function closeCandidateSidePanel() {
+  const candidateId = String(ui.candidates.selectedId || "");
+  ui.candidates.selectedId = "";
+  ui.candidates.editDraft = null;
+  renderSection();
+  window.requestAnimationFrame(() => {
+    const candidateRow = Array.from(el.sectionContainer?.querySelectorAll("[data-action='open-candidate-sidepanel']") || []).find(
+      (row) => String(row.dataset.candidateId || "") === candidateId
+    );
+    candidateRow?.focus({ preventScroll: true });
+  });
 }
 
 function candidateDraftFromRecord(candidate) {
