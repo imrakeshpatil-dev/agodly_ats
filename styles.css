@@ -1432,6 +1432,115 @@ tbody tr.leaderboard-self td {
   flex: 0 0 auto;
 }
 
+.candidate-quality-strip,
+.candidate-bulk-toolbar,
+.daily-queue-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.85rem 0;
+}
+
+.quality-chip,
+.daily-queue-card {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 88%, white 12%);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+}
+
+.quality-chip.is-active {
+  border-color: #4da3ff;
+  background: rgba(77, 163, 255, 0.16);
+}
+
+.candidate-bulk-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 0.75rem;
+  border: 1px solid rgba(77, 163, 255, 0.36);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.candidate-bulk-toolbar select,
+.candidate-bulk-toolbar input,
+.grid-cell-input {
+  min-width: 130px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #0b1b30);
+  color: var(--text);
+  padding: 0.5rem 0.6rem;
+}
+
+.daily-queue-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.daily-queue-card {
+  border-radius: 14px;
+  text-align: left;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.daily-queue-card strong {
+  font-size: 1.65rem;
+}
+
+.daily-queue-card:hover,
+.daily-queue-card:focus-visible {
+  border-color: #4da3ff;
+  transform: translateY(-1px);
+}
+
+.note-composer {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.85rem 0;
+}
+
+.note-composer textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface, #0b1b30);
+  color: var(--text);
+  padding: 0.75rem;
+}
+
+.import-preview-panel {
+  border-color: rgba(52, 211, 153, 0.45);
+}
+
+.candidate-table input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+}
+
+.link-button {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #71b7ff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  .daily-queue-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
 .movement-guidance {
   grid-column: 1 / -1;
   margin: 0;

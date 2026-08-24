@@ -3,6 +3,7 @@ const API_BASE_KEY = "agodly_ats_api_base";
 const CURRENT_USER_ID_KEY = "agodly_ats_current_user_id";
 const AUTH_TOKEN_KEY = "agodly_ats_auth_token";
 const AUTH_USER_KEY = "agodly_ats_auth_user";
+const CANDIDATE_VIEWS_KEY = "agodly_ats_candidate_views_v1";
 const AGODLY_EMAIL_DOMAIN = "@agodly.com";
 const RUNTIME_API_BASE =
   typeof window !== "undefined" && typeof window.AGODLY_API_BASE === "string"
@@ -48,7 +49,7 @@ const API_ROUTES = {
   insightCandidatePool: "/api/jobs/insights/candidate-pool"
 };
 const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
-const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "pdf", "doc", "docx"]);
+const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "xlsx", "pdf", "doc", "docx"]);
 const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
 let pipelineDragState = null;
@@ -399,7 +400,16 @@ const ui = {
     activeCount: 0,
     deletedCount: 0,
     lastQueryKey: "",
-    inFlightQueryKey: ""
+    inFlightQueryKey: "",
+    inlineEdit: false,
+    selectedIds: [],
+    qualityFilter: "all",
+    workQueue: "all",
+    bulkField: "stage",
+    bulkValue: "",
+    savedViews: [],
+    noteDraft: "",
+    undoStack: []
   },
   candidatePool: {
     skill: "all",
@@ -424,7 +434,10 @@ const ui = {
     isSaving: false
   },
   bulkUpload: {
-    isProcessing: false
+    isProcessing: false,
+    isPreviewing: false,
+    pendingImportFiles: [],
+    preview: null
   },
   users: {
     selectedId: "",
@@ -608,6 +621,8 @@ let auth = loadAuthState();
 initialize();
 
 function initialize() {
+  ui.candidates.savedViews = loadCandidateViews();
+  applySharedCandidateViewFromUrl();
   bindEvents();
   render();
   checkBackendHealth();
@@ -719,6 +734,29 @@ function onSectionClick(event) {
     return;
   }
 
+  if (action === "open-candidate-work-queue") {
+    ui.activeSection = "candidates";
+    ui.candidates.view = "active";
+    ui.candidates.workQueue = actionNode.dataset.queue || "all";
+    ui.candidates.qualityFilter = "all";
+    ui.candidates.page = 1;
+    render();
+    return;
+  }
+
+  if (action === "open-daily-candidate") {
+    const candidate = findCandidateByIdAnywhere(actionNode.dataset.candidateId);
+    if (!candidate) return;
+    ui.activeSection = "candidates";
+    ui.candidates.view = "active";
+    ui.candidates.workQueue = "all";
+    ui.candidates.selectedId = candidate.id;
+    ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    render();
+    focusCandidateSidePanel();
+    return;
+  }
+
   if (action === "clear-pipeline-filter") {
     ui.pipelineFilter = "all";
     ui.pipelineRecruiterFilter = "all";
@@ -787,6 +825,26 @@ function onSectionClick(event) {
     return;
   }
 
+  if (action === "open-bulk-spreadsheet-picker") {
+    document.getElementById("bulkUploadSpreadsheetInput")?.click();
+    return;
+  }
+
+  if (action === "confirm-bulk-import") {
+    const files = [...(ui.bulkUpload.pendingImportFiles || [])];
+    ui.bulkUpload.preview = null;
+    ui.bulkUpload.pendingImportFiles = [];
+    void handleBulkUploadFiles(files);
+    return;
+  }
+
+  if (action === "cancel-bulk-import") {
+    ui.bulkUpload.preview = null;
+    ui.bulkUpload.pendingImportFiles = [];
+    renderSection();
+    return;
+  }
+
   if (action === "download-bulk-template") {
     downloadBulkTemplate();
     return;
@@ -828,6 +886,94 @@ function onSectionClick(event) {
     const candidateId = actionNode.dataset.candidateId;
     if (!candidateId) return;
     openCandidateProfileDialog(candidateId);
+    return;
+  }
+
+  if (action === "candidate-select") {
+    const candidateId = String(actionNode.dataset.candidateId || "");
+    const selected = new Set(ui.candidates.selectedIds || []);
+    actionNode.checked ? selected.add(candidateId) : selected.delete(candidateId);
+    ui.candidates.selectedIds = [...selected];
+    renderSection();
+    return;
+  }
+
+  if (action === "candidate-select-page") {
+    const view = ui.candidates.view === "deleted" ? "deleted" : "active";
+    const page = getCandidateWorkspacePage(view);
+    const selected = new Set(ui.candidates.selectedIds || []);
+    page.rows.forEach((candidate) => actionNode.checked ? selected.add(candidate.id) : selected.delete(candidate.id));
+    ui.candidates.selectedIds = [...selected];
+    renderSection();
+    return;
+  }
+
+  if (action === "candidate-quality-filter") {
+    ui.candidates.qualityFilter = String(actionNode.dataset.filter || "all");
+    ui.candidates.page = 1;
+    ui.candidates.selectedId = "";
+    ui.candidates.editDraft = null;
+    renderSection();
+    return;
+  }
+
+  if (action === "toggle-candidate-grid-edit") {
+    ui.candidates.inlineEdit = !ui.candidates.inlineEdit;
+    renderSection();
+    return;
+  }
+
+  if (action === "undo-candidate-grid-edit") {
+    void undoLastCandidateGridEdit();
+    return;
+  }
+
+  if (action === "clear-candidate-selection") {
+    ui.candidates.selectedIds = [];
+    renderSection();
+    return;
+  }
+
+  if (action === "apply-candidate-bulk") {
+    void applyCandidateBulkUpdate();
+    return;
+  }
+
+  if (action === "export-selected-candidates") {
+    exportSelectedCandidatesCsv();
+    return;
+  }
+
+  if (action === "save-candidate-view") {
+    const name = window.prompt("Name this candidate view:", "My working view");
+    if (!name?.trim()) return;
+    const savedView = currentCandidateViewSnapshot(name);
+    ui.candidates.savedViews = [savedView, ...ui.candidates.savedViews].slice(0, 20);
+    localStorage.setItem(CANDIDATE_VIEWS_KEY, JSON.stringify(ui.candidates.savedViews));
+    renderSection();
+    return;
+  }
+
+  if (action === "share-candidate-view") {
+    const sharedView = currentCandidateViewSnapshot("Shared candidate view");
+    const url = new URL(window.location.href);
+    url.hash = `candidate-view=${encodeCandidateView(sharedView)}`;
+    void copyTextToClipboard(url.toString(), "Shareable candidate view link copied.");
+    return;
+  }
+
+  if (action === "add-candidate-note") {
+    void addCandidateCollaborationNote();
+    return;
+  }
+
+  if (action === "email-candidate") {
+    openCandidateEmailTemplate();
+    return;
+  }
+
+  if (action === "download-followup-calendar") {
+    downloadCandidateFollowUpCalendar();
     return;
   }
 
@@ -1133,6 +1279,12 @@ function onSectionClick(event) {
 }
 
 function onSectionChange(event) {
+  if (event.target.matches("#bulkUploadSpreadsheetInput")) {
+    void previewBulkImport(event.target.files);
+    event.target.value = "";
+    return;
+  }
+
   if (
     event.target.matches("#bulkUploadInput") ||
     event.target.matches("#bulkUploadCvInput") ||
@@ -1215,6 +1367,41 @@ function onSectionChange(event) {
     ui.candidates.inFlightQueryKey = "";
     ui.candidates.lastQueryKey = "";
     renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidates-work-queue']")) {
+    ui.candidates.workQueue = event.target.value || "all";
+    ui.candidates.page = 1;
+    ui.candidates.selectedId = "";
+    ui.candidates.editDraft = null;
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidate-saved-view']")) {
+    const savedView = ui.candidates.savedViews.find((item) => item.id === event.target.value);
+    if (savedView) applyCandidateView(savedView);
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidate-bulk-field']")) {
+    ui.candidates.bulkField = event.target.value || "jobId";
+    ui.candidates.bulkValue = "";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidate-bulk-value']")) {
+    ui.candidates.bulkValue = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='candidate-quick-field']")) {
+    const candidateId = event.target.dataset.candidateId;
+    const field = event.target.dataset.field;
+    if (candidateId && field) void quickUpdateCandidate(candidateId, field, event.target.value);
     return;
   }
 
@@ -1333,6 +1520,11 @@ function onSectionChange(event) {
 }
 
 function onSectionInput(event) {
+  if (event.target.matches("[data-action='candidate-note-draft']")) {
+    ui.candidates.noteDraft = event.target.value;
+    return;
+  }
+
   if (event.target.matches("#aiMatchJdInput")) {
     ui.aiMatch.jdText = event.target.value;
     return;
@@ -1955,6 +2147,118 @@ function getLocalCandidatesPage(view) {
   };
 }
 
+function getCandidateQualityIssues(candidate) {
+  const tracking = normalizeCandidateTracking(candidate);
+  const issues = [];
+  if (!String(candidate.email || "").trim() && !String(candidate.phone || "").trim()) issues.push("missing-contact");
+  if (!String(candidate.recruiter || "").trim() || normalizePersonKey(candidate.recruiter) === "unassigned") issues.push("missing-recruiter");
+  if (!String(candidate.jobId || "").trim()) issues.push("missing-job");
+  if (!String(candidate.currentRole || "").trim()) issues.push("missing-role");
+  if (!tracking.nextStepDate && !PIPELINE_INACTIVE_STAGES.has(candidate.stage)) issues.push("missing-follow-up");
+  const updatedAt = new Date(candidate.updatedAt || candidate.createdAt || 0).getTime();
+  if (updatedAt && Date.now() - updatedAt > 14 * 86400000 && !PIPELINE_INACTIVE_STAGES.has(candidate.stage)) issues.push("stale");
+  return issues;
+}
+
+function getCandidateWorkQueue(candidate) {
+  if (PIPELINE_INACTIVE_STAGES.has(candidate.stage)) return "inactive";
+  const value = normalizeCandidateTracking(candidate).nextStepDate;
+  if (!value) return "unscheduled";
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  if (value < todayKey) return "overdue";
+  if (value === todayKey) return "today";
+  const nextWeek = new Date(today);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  const nextWeekKey = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, "0")}-${String(nextWeek.getDate()).padStart(2, "0")}`;
+  return value <= nextWeekKey ? "upcoming" : "later";
+}
+
+function getCandidateWorkspacePage(view) {
+  const sortBy = normalizeCandidateSortBy(ui.candidates.sortBy);
+  const sortDir = normalizeCandidateSortDir(ui.candidates.sortDir);
+  const limit = normalizeCandidatePageSize(ui.candidates.limit);
+  const quality = String(ui.candidates.qualityFilter || "all");
+  const queue = String(ui.candidates.workQueue || "all");
+  const selected = new Set(ui.candidates.selectedIds || []);
+  let rows = filteredCandidates({ mode: view });
+  if (quality !== "all") rows = rows.filter((candidate) => getCandidateQualityIssues(candidate).includes(quality));
+  if (queue !== "all") rows = rows.filter((candidate) => getCandidateWorkQueue(candidate) === queue);
+  const sorted = [...rows].sort((a, b) => compareCandidatesForSort(a, b, sortBy, sortDir));
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const page = Math.min(Math.max(1, Number(ui.candidates.page || 1)), totalPages);
+  const pageRows = sorted.slice((page - 1) * limit, page * limit);
+  ui.candidates.selectedIds = [...selected].filter((id) => rows.some((candidate) => candidate.id === id));
+  ui.candidates.page = page;
+  return { rows: pageRows, total, totalPages, page, limit };
+}
+
+function loadCandidateViews() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CANDIDATE_VIEWS_KEY) || "[]");
+    return Array.isArray(value) ? value.filter((item) => item && item.id && item.name).slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+
+function currentCandidateViewSnapshot(name = "") {
+  return {
+    id: uid("view"),
+    name: String(name || "Candidate view").trim().slice(0, 60),
+    search: ui.search,
+    view: ui.candidates.view,
+    sortBy: ui.candidates.sortBy,
+    sortDir: ui.candidates.sortDir,
+    limit: ui.candidates.limit,
+    qualityFilter: ui.candidates.qualityFilter,
+    workQueue: ui.candidates.workQueue
+  };
+}
+
+function applyCandidateView(view) {
+  if (!view || typeof view !== "object") return;
+  ui.search = String(view.search || "").toLowerCase();
+  if (el.searchInput) el.searchInput.value = ui.search;
+  ui.candidates.view = view.view === "deleted" ? "deleted" : "active";
+  ui.candidates.sortBy = normalizeCandidateSortBy(view.sortBy);
+  ui.candidates.sortDir = normalizeCandidateSortDir(view.sortDir);
+  ui.candidates.limit = normalizeCandidatePageSize(view.limit);
+  ui.candidates.qualityFilter = String(view.qualityFilter || "all");
+  ui.candidates.workQueue = String(view.workQueue || "all");
+  ui.candidates.page = 1;
+  ui.candidates.selectedId = "";
+  ui.candidates.editDraft = null;
+  ui.candidates.lastQueryKey = "";
+}
+
+function applySharedCandidateViewFromUrl() {
+  const raw = new URLSearchParams(String(window.location.hash || "").replace(/^#/, "")).get("candidate-view");
+  if (!raw) return;
+  try {
+    const json = decodeURIComponent(escape(window.atob(raw.replace(/-/g, "+").replace(/_/g, "/"))));
+    applyCandidateView(JSON.parse(json));
+  } catch {
+    // Ignore malformed or expired shared-view links.
+  }
+}
+
+function encodeCandidateView(view) {
+  return window.btoa(unescape(encodeURIComponent(JSON.stringify(view)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function candidateQualityLabel(key) {
+  return ({
+    "missing-contact": "Missing contact",
+    "missing-recruiter": "No recruiter",
+    "missing-job": "No job",
+    "missing-role": "No role",
+    "missing-follow-up": "No follow-up",
+    stale: "Stale 14+ days"
+  })[key] || key;
+}
+
 function getCandidateMaxPageForCurrentView() {
   if (ui.api.connected) {
     return Math.max(1, Number(ui.candidates.totalPages || 1));
@@ -2122,6 +2426,7 @@ function renderDashboardSection() {
       </div>
     </section>
 
+    ${renderRecruiterDailyWorkspace(candidates)}
     ${renderClosureTrackerPanel(closureTracker)}
     ${isFounder ? renderTargetAchievementTracker() : renderRecruiterDashboardPerformance()}
     ${renderOnboardedRevenueTracker()}
@@ -2184,6 +2489,26 @@ function renderDashboardSection() {
       </div>
     </section>
   `;
+}
+
+function renderRecruiterDailyWorkspace(candidates) {
+  const active = candidates.filter((candidate) => !PIPELINE_INACTIVE_STAGES.has(candidate.stage));
+  const counts = ["overdue", "today", "upcoming", "unscheduled"].reduce((acc, key) => {
+    acc[key] = active.filter((candidate) => getCandidateWorkQueue(candidate) === key).length;
+    return acc;
+  }, {});
+  const priorities = active
+    .filter((candidate) => ["overdue", "today", "upcoming"].includes(getCandidateWorkQueue(candidate)))
+    .sort((a, b) => String(normalizeCandidateTracking(a).nextStepDate).localeCompare(String(normalizeCandidateTracking(b).nextStepDate)))
+    .slice(0, 8);
+  return `
+    <section class="panel daily-workspace-panel">
+      <div class="candidate-list-head"><div><p class="panel-kicker">Daily workspace</p><h2 class="panel-title">Follow-ups that move hiring forward</h2><p class="panel-subtitle">Open a focused queue instead of maintaining a separate tracker.</p></div></div>
+      <div class="daily-queue-grid">
+        ${[["overdue", "Overdue", counts.overdue], ["today", "Due today", counts.today], ["upcoming", "Next 7 days", counts.upcoming], ["unscheduled", "No follow-up", counts.unscheduled]].map(([key, label, count]) => `<button class="daily-queue-card" type="button" data-action="open-candidate-work-queue" data-queue="${key}"><strong>${count}</strong><span>${label}</span></button>`).join("")}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Role / Job</th><th>Recruiter</th><th>Next step</th><th>Due</th></tr></thead><tbody>${priorities.length ? priorities.map((candidate) => { const tracking = normalizeCandidateTracking(candidate); const job = findById(state.jobs, candidate.jobId); return `<tr><td><button class="link-button" type="button" data-action="open-daily-candidate" data-candidate-id="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)}</button></td><td>${escapeHtml(job?.title || candidate.currentRole || "Unassigned")}</td><td>${escapeHtml(candidate.recruiter || "Unassigned")}</td><td>${escapeHtml(tracking.nextStep || "Follow up")}</td><td>${escapeHtml(tracking.nextStepDate || "Not set")}</td></tr>`; }).join("") : `<tr><td colspan="5" class="empty">No dated follow-ups yet. Add them from the candidate grid.</td></tr>`}</tbody></table></div>
+    </section>`;
 }
 
 function renderDashboardLoadError(message) {
@@ -2719,11 +3044,13 @@ function renderClosureTrackerPanel(metrics) {
 function renderCandidatesSection() {
   const view = ui.candidates.view === "deleted" ? "deleted" : "active";
   const localPage = getLocalCandidatesPage(view);
-  const rows = ui.api.connected ? ui.candidates.pageRows || [] : localPage.rows;
-  const total = ui.api.connected ? Number(ui.candidates.total || 0) : localPage.total;
-  const totalPages = ui.api.connected ? Math.max(1, Number(ui.candidates.totalPages || 1)) : localPage.totalPages;
-  const currentPage = ui.api.connected ? Math.max(1, Number(ui.candidates.page || 1)) : localPage.page;
-  const limit = ui.api.connected ? Math.max(1, Number(ui.candidates.limit || 25)) : localPage.limit;
+  const workspaceFilterActive = ui.candidates.qualityFilter !== "all" || ui.candidates.workQueue !== "all";
+  const workspacePage = workspaceFilterActive ? getCandidateWorkspacePage(view) : null;
+  const rows = workspacePage?.rows || (ui.api.connected ? ui.candidates.pageRows || [] : localPage.rows);
+  const total = workspacePage?.total ?? (ui.api.connected ? Number(ui.candidates.total || 0) : localPage.total);
+  const totalPages = workspacePage?.totalPages ?? (ui.api.connected ? Math.max(1, Number(ui.candidates.totalPages || 1)) : localPage.totalPages);
+  const currentPage = workspacePage?.page ?? (ui.api.connected ? Math.max(1, Number(ui.candidates.page || 1)) : localPage.page);
+  const limit = workspacePage?.limit ?? (ui.api.connected ? Math.max(1, Number(ui.candidates.limit || 25)) : localPage.limit);
   const sortBy = normalizeCandidateSortBy(ui.candidates.sortBy);
   const sortDir = normalizeCandidateSortDir(ui.candidates.sortDir);
   const hasRows = rows.length > 0;
@@ -2745,6 +3072,13 @@ function renderCandidatesSection() {
     ui.candidates.editDraft = null;
   }
   const hasSelectedCandidate = Boolean(ui.candidates.selectedId && ui.candidates.editDraft);
+  const activeCandidates = filteredCandidates({ mode: "active", ignoreSearch: true });
+  const qualityCounts = activeCandidates.reduce((acc, candidate) => {
+    getCandidateQualityIssues(candidate).forEach((issue) => { acc[issue] = Number(acc[issue] || 0) + 1; });
+    return acc;
+  }, {});
+  const selectedIds = new Set(ui.candidates.selectedIds || []);
+  const allPageSelected = rows.length > 0 && rows.every((candidate) => selectedIds.has(candidate.id));
 
   return `
     <section class="candidates-layout ${hasSelectedCandidate ? "has-profile" : "is-list-only"}">
@@ -2784,7 +3118,29 @@ function renderCandidatesSection() {
               ${[10, 25, 50, 100].map((size) => `<option value="${size}" ${limit === size ? "selected" : ""}>${size}</option>`).join("")}
             </select>
           </label>
+          <label class="dialog-field">
+            <span>Daily Queue</span>
+            <select data-action="candidates-work-queue">
+              ${[["all", "All"], ["overdue", "Overdue"], ["today", "Due today"], ["upcoming", "Next 7 days"], ["unscheduled", "No follow-up"]].map(([value, label]) => `<option value="${value}" ${ui.candidates.workQueue === value ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+          <label class="dialog-field">
+            <span>Saved View</span>
+            <select data-action="candidate-saved-view">
+              <option value="">Select a view</option>
+              ${ui.candidates.savedViews.map((savedView) => `<option value="${escapeHtml(savedView.id)}">${escapeHtml(savedView.name)}</option>`).join("")}
+            </select>
+          </label>
+          <button class="tool-btn" type="button" data-action="save-candidate-view">Save view</button>
+          <button class="tool-btn" type="button" data-action="share-candidate-view">Share view</button>
+          <button class="tool-btn ${ui.candidates.inlineEdit ? "primary" : ""}" type="button" data-action="toggle-candidate-grid-edit">${ui.candidates.inlineEdit ? "Finish grid editing" : "Edit in grid"}</button>
+          <button class="tool-btn" type="button" data-action="undo-candidate-grid-edit" ${(ui.candidates.undoStack || []).length ? "" : "disabled"}>Undo last edit</button>
         </div>
+        <div class="candidate-quality-strip" aria-label="Data quality filters">
+          <button class="quality-chip ${ui.candidates.qualityFilter === "all" ? "is-active" : ""}" type="button" data-action="candidate-quality-filter" data-filter="all">All records</button>
+          ${["missing-contact", "missing-recruiter", "missing-job", "missing-role", "missing-follow-up", "stale"].map((key) => `<button class="quality-chip ${ui.candidates.qualityFilter === key ? "is-active" : ""}" type="button" data-action="candidate-quality-filter" data-filter="${key}">${candidateQualityLabel(key)} <strong>${Number(qualityCounts[key] || 0)}</strong></button>`).join("")}
+        </div>
+        ${selectedIds.size ? renderCandidateBulkToolbar(selectedIds.size) : ""}
         <div class="table-actions candidate-results-bar" aria-live="polite">
           <span class="panel-subtitle">${
             ui.candidates.isLoading
@@ -2798,6 +3154,7 @@ function renderCandidatesSection() {
           <table class="candidate-table">
             <thead>
               <tr>
+                <th><input type="checkbox" data-action="candidate-select-page" aria-label="Select this page" ${allPageSelected ? "checked" : ""} /></th>
                 <th>Name</th>
                 <th>Email</th>
                 <th>Phone</th>
@@ -2811,6 +3168,7 @@ function renderCandidatesSection() {
                 <th>Stage</th>
                 <th>Source</th>
                 <th>Recruiter</th>
+                <th>Follow-up</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -2818,7 +3176,7 @@ function renderCandidatesSection() {
               ${
                 hasRows
                   ? rows.map((candidate) => renderCandidateRow(candidate, candidate.id === ui.candidates.selectedId)).join("")
-                  : `<tr><td colspan="14" class="empty">${
+                  : `<tr><td colspan="16" class="empty">${
                       ui.candidates.isLoading
                         ? "Loading candidates..."
                         : view === "deleted"
@@ -4183,8 +4541,9 @@ function renderBulkUploadSection() {
   return `
     <section class="panel">
       <h2 class="panel-title">Bulk Upload</h2>
-      <p class="panel-subtitle">Drag and drop CV files or CSV to auto-capture details and build your candidate pool.</p>
+      <p class="panel-subtitle">Preview Excel/CSV data before it is saved, or upload CV files for automatic extraction.</p>
       <div class="bulk-toolbar">
+        <button class="tool-btn primary" type="button" data-action="open-bulk-spreadsheet-picker">Import Excel / CSV</button>
         <button class="tool-btn primary" type="button" data-action="open-bulk-cv-picker">Upload CV Files</button>
         <button class="tool-btn" type="button" data-action="open-bulk-csv-picker">Upload CSV</button>
         <button class="tool-btn" type="button" data-action="download-bulk-template">Download CSV Template</button>
@@ -4192,14 +4551,17 @@ function renderBulkUploadSection() {
       </div>
       <p class="panel-subtitle">
         Parser mode: ${ui.api.connected ? "Backend Deep Parsing" : "Local Fallback Parser"}
-        ${ui.bulkUpload.isProcessing ? "<span class='bulk-processing-chip'>Processing upload...</span>" : ""}
+        ${ui.bulkUpload.isProcessing || ui.bulkUpload.isPreviewing ? "<span class='bulk-processing-chip'>Processing upload...</span>" : ""}
       </p>
       <p class="panel-subtitle">AI-grade CV extraction is available when backend is connected and OPENAI key is configured.</p>
       <p class="panel-subtitle">${summary.lastRunAt ? `Last run: ${escapeHtml(formatDate(summary.lastRunAt))}` : "No uploads yet"}</p>
-      <input id="bulkUploadInput" type="file" accept=".csv,.pdf,.doc,.docx" multiple hidden />
+      <input id="bulkUploadInput" type="file" accept=".csv,.xlsx,.pdf,.doc,.docx" multiple hidden />
       <input id="bulkUploadCvInput" type="file" accept=".pdf,.doc,.docx" multiple hidden />
       <input id="bulkUploadCsvInput" type="file" accept=".csv" multiple hidden />
+      <input id="bulkUploadSpreadsheetInput" type="file" accept=".csv,.xlsx" multiple hidden />
     </section>
+
+    ${renderBulkImportPreview()}
 
     <section class="panel bulk-upload-layout">
       <div
@@ -4208,11 +4570,11 @@ function renderBulkUploadSection() {
         data-action="open-bulk-picker"
         role="button"
         tabindex="0"
-        aria-label="Drop CV and CSV files here or click to upload"
+        aria-label="Drop CV, Excel, and CSV files here or click to upload"
       >
         <div class="bulk-drop-icon">+</div>
         <p class="bulk-drop-title">Drop files here or click to upload</p>
-        <p class="bulk-drop-sub">Supported: PDF, DOC, DOCX, CSV up to 10MB</p>
+        <p class="bulk-drop-sub">Supported: PDF, DOC, DOCX, CSV, XLSX up to 10MB</p>
       </div>
 
       <aside class="bulk-side">
@@ -4231,7 +4593,7 @@ function renderBulkUploadSection() {
           <h3 class="panel-subtitle">Tips</h3>
           <ul class="bulk-tips">
             <li>Max file size 10MB</li>
-            <li>Supported PDF, DOC, DOCX, CSV</li>
+            <li>Supported PDF, DOC, DOCX, CSV, XLSX</li>
             <li>Avoid encrypted PDFs</li>
             <li>Clear text resumes work best</li>
           </ul>
@@ -4406,6 +4768,32 @@ function renderBulkUploadSection() {
       </div>
     </section>
   `;
+}
+
+function renderBulkImportPreview() {
+  const preview = ui.bulkUpload.preview;
+  if (!preview) return "";
+  const candidates = Array.isArray(preview.previewCandidates) ? preview.previewCandidates : [];
+  const duplicates = Array.isArray(preview.blockedDuplicates) ? preview.blockedDuplicates : [];
+  const summary = preview.summary || {};
+  return `
+    <section class="panel import-preview-panel">
+      <div class="candidate-list-head">
+        <div><p class="panel-kicker">Safe import preview</p><h2 class="panel-title">Review before saving</h2><p class="panel-subtitle">Recognized columns are mapped to ATS fields. Nothing below has been written to the database yet.</p></div>
+        <div class="table-actions"><button class="tool-btn" type="button" data-action="cancel-bulk-import">Cancel</button><button class="tool-btn primary" type="button" data-action="confirm-bulk-import" ${candidates.length ? "" : "disabled"}>Import ${candidates.length} candidate(s)</button></div>
+      </div>
+      <div class="metrics-grid">
+        ${metricCard("Files checked", Number(summary.totalFiles || 0))}
+        ${metricCard("Ready to add", candidates.length)}
+        ${metricCard("Duplicates blocked", Number(summary.duplicateCandidates || duplicates.length))}
+        ${metricCard("Errors", Number(summary.failed || 0))}
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Experience</th><th>Location</th><th>Skills</th></tr></thead>
+        <tbody>${candidates.length ? candidates.slice(0, 50).map((candidate) => `<tr><td>${escapeHtml(candidate.name || "-")}</td><td>${escapeHtml(candidate.email || "-")}</td><td>${escapeHtml(candidate.phone || "-")}</td><td>${escapeHtml(candidate.currentRole || "-")}</td><td>${candidate.experienceYears ?? "-"}</td><td>${escapeHtml(candidate.location || "-")}</td><td>${escapeHtml((candidate.skills || []).join(", ") || "-")}</td></tr>`).join("") : `<tr><td colspan="7" class="empty">No new rows are ready to import.</td></tr>`}</tbody></table>
+      </div>
+      ${duplicates.length ? `<details><summary>${duplicates.length} duplicate row(s) will stay unchanged</summary><ul class="bulk-tips">${duplicates.slice(0, 20).map((item) => `<li>${escapeHtml(item.name || "Unknown")}: ${escapeHtml(item.reason || "Existing email or phone")}</li>`).join("")}</ul></details>` : ""}
+    </section>`;
 }
 
 function renderUsersSection() {
@@ -5328,9 +5716,9 @@ function getCandidateImportSource(candidate) {
   if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return null;
   const uploadType = String(parsedData.uploadFileType || "").toUpperCase();
   const source = String(candidate?.source || "");
-  if (uploadType !== "CSV" && !/^CSV Upload \(/i.test(source)) return null;
-  const sourceMatch = source.match(/^CSV Upload \((.+)\)$/i);
-  return { fileName: String(parsedData.uploadFileName || sourceMatch?.[1] || "CSV import") };
+  if (!["CSV", "XLSX"].includes(uploadType) && !/^(CSV|Excel) Upload \(/i.test(source)) return null;
+  const sourceMatch = source.match(/^(?:CSV|Excel) Upload \((.+)\)$/i);
+  return { fileName: String(parsedData.uploadFileName || sourceMatch?.[1] || "Spreadsheet import") };
 }
 
 function renderResumeExtraction(extraction) {
@@ -5431,6 +5819,14 @@ function getCandidateTimeline(candidate) {
   const parsedData = candidate?.parsedData;
   if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return [];
   return normalizeTimelineEvents(parsedData.timeline);
+}
+
+function getCandidateCollaborationNotes(candidate) {
+  const parsedData = candidate?.parsedData;
+  if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return [];
+  return Array.isArray(parsedData.collaborationNotes)
+    ? parsedData.collaborationNotes.filter((item) => item && typeof item === "object").sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    : [];
 }
 
 function normalizeTimelineEvents(items) {
@@ -6545,6 +6941,7 @@ function renderActivityLogSection() {
     .slice(0, 60);
 
   return `
+    ${renderAdoptionReport()}
     <section class="panel">
       <h2 class="panel-title">Activity Log</h2>
       <ul class="log-list">
@@ -6563,6 +6960,53 @@ function renderActivityLogSection() {
   `;
 }
 
+function renderAdoptionReport() {
+  const sevenDaysAgo = Date.now() - 7 * 86400000;
+  const candidates = filteredCandidates({ mode: "active", ignoreSearch: true });
+  const recentUpdates = candidates.filter((candidate) => new Date(candidate.updatedAt || candidate.createdAt || 0).getTime() >= sevenDaysAgo).length;
+  const complete = candidates.filter((candidate) => getCandidateQualityIssues(candidate).length === 0).length;
+  const recentActivities = state.activities.filter((item) => new Date(item.timestamp || 0).getTime() >= sevenDaysAgo);
+  const imports = recentActivities.filter((item) => String(item.type || item.module || "").includes("bulk-upload")).length;
+  const byRecruiter = new Map();
+  candidates.forEach((candidate) => {
+    const key = candidate.recruiter || "Unassigned";
+    const row = byRecruiter.get(key) || { recruiter: key, candidates: 0, complete: 0, followups: 0, updated: 0 };
+    row.candidates += 1;
+    if (!getCandidateQualityIssues(candidate).length) row.complete += 1;
+    if (normalizeCandidateTracking(candidate).nextStepDate) row.followups += 1;
+    if (new Date(candidate.updatedAt || candidate.createdAt || 0).getTime() >= sevenDaysAgo) row.updated += 1;
+    byRecruiter.set(key, row);
+  });
+  const rows = [...byRecruiter.values()].sort((a, b) => b.updated - a.updated).slice(0, 20);
+  return `
+    <section class="panel adoption-report-panel">
+      <p class="panel-kicker">ATS adoption</p><h2 class="panel-title">Is the team working in the system?</h2><p class="panel-subtitle">A seven-day signal based on candidate updates, follow-ups, imports, and data completeness.</p>
+      <div class="metrics-grid">${metricCard("Candidates updated", recentUpdates)}${metricCard("Activity events", recentActivities.length)}${metricCard("Spreadsheet / CV imports", imports)}${metricCard("Complete records", candidates.length ? `${Math.round((complete / candidates.length) * 100)}%` : "0%")}</div>
+      <div class="table-wrap"><table><thead><tr><th>Recruiter</th><th>Candidates</th><th>Updated 7d</th><th>Follow-ups set</th><th>Complete records</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.recruiter)}</td><td>${row.candidates}</td><td>${row.updated}</td><td>${row.followups}</td><td>${row.candidates ? Math.round((row.complete / row.candidates) * 100) : 0}%</td></tr>`).join("") : `<tr><td colspan="5" class="empty">No adoption data available.</td></tr>`}</tbody></table></div>
+    </section>`;
+}
+
+function renderCandidateBulkToolbar(count) {
+  const canAssignRecruiter = canCurrentUserAccessFounderWorkspace() || normalizeUserRole(getCurrentUser()?.role) === "TA Manager";
+  return `
+    <div class="candidate-bulk-toolbar">
+      <strong>${count} selected</strong>
+      <select data-action="candidate-bulk-field">
+        <option value="jobId" ${ui.candidates.bulkField === "jobId" ? "selected" : ""}>Assign job</option>
+        <option value="nextStepDate" ${ui.candidates.bulkField === "nextStepDate" ? "selected" : ""}>Set follow-up</option>
+        ${canAssignRecruiter ? `<option value="recruiter" ${ui.candidates.bulkField === "recruiter" ? "selected" : ""}>Assign recruiter</option>` : ""}
+      </select>
+      ${ui.candidates.bulkField === "jobId"
+        ? `<select data-action="candidate-bulk-value"><option value="">Unassigned</option>${state.jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${ui.candidates.bulkValue === job.id ? "selected" : ""}>${escapeHtml(job.title)}</option>`).join("")}</select>`
+        : ui.candidates.bulkField === "nextStepDate"
+          ? `<input type="date" data-action="candidate-bulk-value" value="${escapeHtml(ui.candidates.bulkValue || "")}" />`
+          : `<input type="text" data-action="candidate-bulk-value" value="${escapeHtml(ui.candidates.bulkValue || "")}" placeholder="Recruiter name" />`}
+      <button class="tool-btn primary" type="button" data-action="apply-candidate-bulk">Apply</button>
+      <button class="tool-btn" type="button" data-action="export-selected-candidates">Export CSV</button>
+      <button class="tool-btn" type="button" data-action="clear-candidate-selection">Clear</button>
+    </div>`;
+}
+
 function renderCandidateRow(item, isSelected = false) {
   const job = findById(state.jobs, item.jobId);
   const deleted = isCandidateDeleted(item);
@@ -6573,6 +7017,9 @@ function renderCandidateRow(item, isSelected = false) {
   const closureType = normalizeClosureType(item.closureType);
   const overallRating = normalizeRating(item.overallRating);
   const canWrite = canCurrentUserWriteRecords();
+  const isChecked = (ui.candidates.selectedIds || []).includes(item.id);
+  const inline = ui.candidates.inlineEdit && !deleted && canWrite;
+  const nextStepDate = normalizeCandidateTracking(item).nextStepDate;
 
   return `
     <tr
@@ -6584,10 +7031,11 @@ function renderCandidateRow(item, isSelected = false) {
       ${isSelected ? `aria-expanded="true" aria-controls="candidateProfilePanel"` : `aria-expanded="false"`}
       aria-label="Open candidate profile for ${escapeHtml(item.name)}"
     >
-      <td data-label="Candidate">${escapeHtml(item.name)}<br /><span class="panel-subtitle">${escapeHtml(job?.title || "Unassigned")}</span></td>
+      <td data-label="Select"><input type="checkbox" data-action="candidate-select" data-candidate-id="${escapeHtml(item.id)}" aria-label="Select ${escapeHtml(item.name)}" ${isChecked ? "checked" : ""} /></td>
+      <td data-label="Candidate">${escapeHtml(item.name)}<br />${inline ? `<select class="grid-cell-input" data-action="candidate-quick-field" data-field="jobId" data-candidate-id="${escapeHtml(item.id)}"><option value="">Unassigned</option>${state.jobs.map((availableJob) => `<option value="${escapeHtml(availableJob.id)}" ${item.jobId === availableJob.id ? "selected" : ""}>${escapeHtml(availableJob.title)}</option>`).join("")}</select>` : `<span class="panel-subtitle">${escapeHtml(job?.title || "Unassigned")}</span>`}</td>
       <td data-label="Email">${escapeHtml(item.email || "-")}</td>
       <td data-label="Phone">${escapeHtml(item.phone || "-")}</td>
-      <td data-label="Current Role">${escapeHtml(currentRole || "-")}</td>
+      <td data-label="Current Role">${inline ? `<input class="grid-cell-input" type="text" data-action="candidate-quick-field" data-field="currentRole" data-candidate-id="${escapeHtml(item.id)}" value="${escapeHtml(currentRole || "")}" />` : escapeHtml(currentRole || "-")}</td>
       <td data-label="Experience">${item.experienceYears == null ? "-" : `${item.experienceYears} yrs`}</td>
       <td data-label="Closure">${statusBadge(closureType)}</td>
       <td data-label="Tracking">${statusBadge(trackingStatus)}</td>
@@ -6596,7 +7044,8 @@ function renderCandidateRow(item, isSelected = false) {
       <td data-label="Skills">${escapeHtml(item.skills.join(", "))}</td>
       <td data-label="Stage"><span class="badge ${stageClass}">${escapeHtml(stageLabel)}</span></td>
       <td data-label="Source">${escapeHtml(item.source)}</td>
-      <td data-label="Recruiter">${escapeHtml(item.recruiter)}</td>
+      <td data-label="Recruiter">${inline ? `<input class="grid-cell-input" type="text" data-action="candidate-quick-field" data-field="recruiter" data-candidate-id="${escapeHtml(item.id)}" value="${escapeHtml(item.recruiter || "")}" />` : escapeHtml(item.recruiter)}</td>
+      <td data-label="Follow-up">${inline ? `<input class="grid-cell-input" type="date" data-action="candidate-quick-field" data-field="nextStepDate" data-candidate-id="${escapeHtml(item.id)}" value="${escapeHtml(nextStepDate || "")}" />` : escapeHtml(nextStepDate || "Not set")}</td>
       <td data-label="Actions">
         <div class="table-actions">
           <button class="tool-btn" type="button" data-action="edit-candidate" data-candidate-id="${escapeHtml(item.id)}">Edit</button>
@@ -6630,6 +7079,7 @@ function renderCandidateSidePanel() {
   const stageHistory = getCandidateStageHistory(preview);
   const timeline = getCandidateTimeline(preview);
   const submissions = getCandidateSubmissions(preview);
+  const collaborationNotes = getCandidateCollaborationNotes(preview);
   const canWrite = canCurrentUserWriteRecords();
 
   return `
@@ -6780,6 +7230,12 @@ function renderCandidateSidePanel() {
         </label>
       </div>
 
+      <div class="candidate-timeline-card collaboration-card">
+        <div class="candidate-timeline-head"><div><h4>Team Notes & Mentions</h4><p>Use @name to make ownership visible in the activity trail.</p></div><span>${collaborationNotes.length} note${collaborationNotes.length === 1 ? "" : "s"}</span></div>
+        ${deleted || !canWrite ? "" : `<div class="note-composer"><textarea rows="3" data-action="candidate-note-draft" placeholder="Add an update, decision, or @mention…">${escapeHtml(ui.candidates.noteDraft || "")}</textarea><button class="tool-btn primary" type="button" data-action="add-candidate-note">Add note</button></div>`}
+        <div class="candidate-timeline-list">${collaborationNotes.length ? collaborationNotes.slice(0, 12).map((note) => `<article class="timeline-event"><strong>${escapeHtml(note.author || "Team member")}</strong><span>${escapeHtml(formatShortDate(note.createdAt || ""))}${Array.isArray(note.mentions) && note.mentions.length ? ` · mentions ${escapeHtml(note.mentions.join(", "))}` : ""}</span><p>${escapeHtml(note.text || "")}</p></article>`).join("") : `<p class="panel-subtitle">No team notes yet.</p>`}</div>
+      </div>
+
       <div class="candidate-file-card">
         <div>
           <h4>Stage History</h4>
@@ -6861,7 +7317,7 @@ function renderCandidateSidePanel() {
       ${
         importSource
           ? `<div class="candidate-file-card candidate-import-source">
-               <div><h4>Import Source</h4><p>${escapeHtml(importSource.fileName)}</p><span>CSV import provenance only — this is not a candidate CV.</span></div>
+               <div><h4>Import Source</h4><p>${escapeHtml(importSource.fileName)}</p><span>Spreadsheet import provenance only — this is not a candidate CV.</span></div>
              </div>`
           : ""
       }
@@ -6871,6 +7327,8 @@ function renderCandidateSidePanel() {
       ${renderResumeDiagnostics(preview)}
 
       <div class="candidate-panel-actions">
+        <button class="tool-btn" type="button" data-action="email-candidate" ${preview.email ? "" : "disabled"}>Email candidate</button>
+        <button class="tool-btn" type="button" data-action="download-followup-calendar" ${normalizeCandidateTracking(preview).nextStepDate ? "" : "disabled"}>Add follow-up to calendar</button>
         <button class="tool-btn" type="button" data-action="preview-candidate-profile">Preview Profile</button>
         <button class="tool-btn" type="button" data-action="download-candidate-json">Export Profile</button>
         <button class="tool-btn" type="button" data-action="apply-resume-extraction" ${deleted || !canWrite || !resumeExtraction ? "disabled" : ""}>Apply Parsed Data to Draft</button>
@@ -7268,6 +7726,167 @@ async function createCandidateViaBackend(candidate, allowDuplicate = false) {
   }
 
   return mapApiCandidateToLocal(payload.candidate);
+}
+
+async function updateCandidateFields(candidateId, changes, activityLabel = "Candidate updated") {
+  if (!canCurrentUserWriteRecords() || !ui.api.connected) throw new Error("Candidate changes require an active write-enabled session.");
+  const existing = findCandidateByIdAnywhere(candidateId);
+  if (!existing) throw new Error("Candidate not found.");
+  const next = { ...existing, ...changes };
+  if (Object.prototype.hasOwnProperty.call(changes, "nextStepDate")) {
+    const parsedData = existing.parsedData && typeof existing.parsedData === "object" && !Array.isArray(existing.parsedData)
+      ? { ...existing.parsedData }
+      : {};
+    parsedData.tracking = { ...normalizeCandidateTracking(existing), nextStepDate: normalizeDateOnly(changes.nextStepDate) };
+    next.parsedData = parsedData;
+    next.nextStepDate = normalizeDateOnly(changes.nextStepDate);
+  }
+  const response = await fetch(buildApiUrl(API_ROUTES.updateCandidate(candidateId)), {
+    method: "PUT",
+    headers: getAuthHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+    body: JSON.stringify(next)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.success || !payload?.candidate) throw new Error(payload?.error?.message || "Candidate update failed.");
+  const updated = mapApiCandidateToLocal(payload.candidate);
+  upsertCandidateInState(updated);
+  const pageIndex = (ui.candidates.pageRows || []).findIndex((item) => item.id === updated.id);
+  if (pageIndex >= 0) ui.candidates.pageRows[pageIndex] = updated;
+  recordActivity("candidate", `${activityLabel}: ${updated.name}`, { action: "candidate.quick-update", candidateId: updated.id });
+  return updated;
+}
+
+async function quickUpdateCandidate(candidateId, field, value) {
+  const allowed = new Set(["currentRole", "recruiter", "jobId", "nextStepDate"]);
+  if (!allowed.has(field)) return;
+  try {
+    const existing = findCandidateByIdAnywhere(candidateId);
+    const previousValue = field === "nextStepDate" ? normalizeCandidateTracking(existing).nextStepDate : existing?.[field];
+    await updateCandidateFields(candidateId, { [field]: value }, `Grid field ${field} updated`);
+    ui.candidates.undoStack = [{ candidateId, field, value: previousValue ?? "" }, ...(ui.candidates.undoStack || [])].slice(0, 20);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Grid edit could not be saved.");
+    renderSection();
+  }
+}
+
+async function undoLastCandidateGridEdit() {
+  const [last, ...remaining] = ui.candidates.undoStack || [];
+  if (!last) return;
+  try {
+    await updateCandidateFields(last.candidateId, { [last.field]: last.value }, `Grid edit undone`);
+    ui.candidates.undoStack = remaining;
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "The last edit could not be undone.");
+  }
+}
+
+async function applyCandidateBulkUpdate() {
+  const ids = [...new Set(ui.candidates.selectedIds || [])];
+  if (!ids.length) return;
+  const field = ui.candidates.bulkField || "jobId";
+  const value = ui.candidates.bulkValue || "";
+  if (field === "recruiter" && !String(value).trim()) {
+    alert("Enter a recruiter name before applying.");
+    return;
+  }
+  if (field === "nextStepDate" && !value) {
+    alert("Choose a follow-up date before applying.");
+    return;
+  }
+  if (!window.confirm(`Apply this change to ${ids.length} candidate(s)? Each record will keep its existing history and data.`)) return;
+  let completed = 0;
+  const failures = [];
+  for (const id of ids) {
+    try {
+      await updateCandidateFields(id, { [field]: value }, `Bulk ${field} updated`);
+      completed += 1;
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : "Update failed");
+    }
+  }
+  ui.candidates.selectedIds = failures.length ? ids.slice(completed) : [];
+  ui.candidates.lastQueryKey = "";
+  renderSection();
+  alert(`${completed} candidate(s) updated.${failures.length ? ` ${failures.length} failed: ${failures[0]}` : ""}`);
+}
+
+function exportSelectedCandidatesCsv() {
+  const ids = new Set(ui.candidates.selectedIds || []);
+  const rows = state.candidates.filter((candidate) => ids.has(candidate.id));
+  if (!rows.length) return;
+  const quote = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const columns = ["Name", "Email", "Phone", "Current Role", "Experience", "Location", "Skills", "Stage", "Job", "Recruiter", "Follow-up", "Source"];
+  const csv = [columns.map(quote).join(","), ...rows.map((candidate) => {
+    const job = findById(state.jobs, candidate.jobId);
+    return [candidate.name, candidate.email, candidate.phone, candidate.currentRole, candidate.experienceYears, candidate.location, (candidate.skills || []).join("; "), candidate.stage, job?.title || "", candidate.recruiter, normalizeCandidateTracking(candidate).nextStepDate, candidate.source].map(quote).join(",");
+  })].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `agodly-candidates-${todayISO()}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  recordActivity("candidate", `Exported ${rows.length} selected candidate(s) to CSV`);
+}
+
+async function addCandidateCollaborationNote() {
+  const candidate = findCandidateByIdAnywhere(ui.candidates.selectedId);
+  const text = String(ui.candidates.noteDraft || "").trim();
+  if (!candidate || !text) return;
+  const actor = getCurrentUser();
+  const parsedData = candidate.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? { ...candidate.parsedData }
+    : {};
+  const mentions = [...text.matchAll(/(^|\s)@([a-zA-Z][\w.-]*(?:\s+[a-zA-Z][\w.-]*)?)/g)].map((match) => match[2].trim());
+  const note = { id: uid("note"), text, mentions, author: actor?.name || "Team member", authorEmail: actor?.email || "", createdAt: new Date().toISOString() };
+  parsedData.collaborationNotes = [note, ...getCandidateCollaborationNotes(candidate)].slice(0, 100);
+  parsedData.timeline = [{ id: uid("evt"), eventType: "Team note", candidateId: candidate.id, timestamp: note.createdAt, user: note.author, remarks: text }, ...getCandidateTimeline(candidate)].slice(0, 200);
+  try {
+    const updated = await updateCandidateFields(candidate.id, { parsedData }, "Team note added");
+    ui.candidates.noteDraft = "";
+    ui.candidates.editDraft = candidateDraftFromRecord(updated);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "The note could not be saved.");
+  }
+}
+
+function openCandidateEmailTemplate() {
+  const candidate = findCandidateByIdAnywhere(ui.candidates.selectedId);
+  if (!candidate?.email) return;
+  const job = findById(state.jobs, candidate.jobId);
+  const tracking = normalizeCandidateTracking(candidate);
+  const subject = `Agodly update${job?.title ? `: ${job.title}` : " on your application"}`;
+  const body = `Hi ${candidate.name || "there"},\n\nI’m following up regarding ${job?.title || candidate.currentRole || "your application"}.${tracking.nextStep ? `\n\nNext step: ${tracking.nextStep}` : ""}${tracking.nextStepDate ? `\nPlanned date: ${tracking.nextStepDate}` : ""}\n\nRegards,\n${getCurrentUser()?.name || "Agodly Recruitment Team"}`;
+  window.location.href = `mailto:${encodeURIComponent(candidate.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  recordActivity("communication", `Email template opened for ${candidate.name}`, { candidateId: candidate.id, action: "candidate.email-template" });
+}
+
+function downloadCandidateFollowUpCalendar() {
+  const candidate = findCandidateByIdAnywhere(ui.candidates.selectedId);
+  const tracking = normalizeCandidateTracking(candidate);
+  if (!candidate || !tracking.nextStepDate) return;
+  const compactDate = tracking.nextStepDate.replace(/-/g, "");
+  const escapeIcs = (value) => String(value || "").replace(/\\/g, "\\\\").replace(/,/g, "\\,").replace(/;/g, "\\;").replace(/\n/g, "\\n");
+  const job = findById(state.jobs, candidate.jobId);
+  const ics = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Agodly ATS//Follow-up//EN", "BEGIN:VEVENT",
+    `UID:${candidate.id}-${compactDate}@agodly.com`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`,
+    `DTSTART;VALUE=DATE:${compactDate}`, `DTEND;VALUE=DATE:${compactDate}`,
+    `SUMMARY:${escapeIcs(`Follow up: ${candidate.name}`)}`,
+    `DESCRIPTION:${escapeIcs(`${tracking.nextStep || "Candidate follow-up"}${job?.title ? ` for ${job.title}` : ""}`)}`,
+    "END:VEVENT", "END:VCALENDAR"
+  ].join("\r\n");
+  const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${String(candidate.name || "candidate").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-follow-up.ics`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  recordActivity("communication", `Calendar follow-up created for ${candidate.name}`, { candidateId: candidate.id, action: "candidate.calendar" });
 }
 
 async function saveCandidateProfileDraft() {
@@ -8582,11 +9201,12 @@ async function handleBulkUploadFiles(fileList) {
   }
 }
 
-async function handleBulkUploadViaBackend(files) {
+async function requestBulkUploadBackend(files, options = {}) {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append("files", file);
   });
+  if (options.previewOnly) formData.append("previewOnly", "true");
 
   const response = await fetch(buildApiUrl(API_ROUTES.parseBulkUpload), {
     method: "POST",
@@ -8598,6 +9218,39 @@ async function handleBulkUploadViaBackend(files) {
   if (!response.ok || !payload?.success) {
     throw new Error(payload?.error?.message || "Backend parse failed");
   }
+
+  return payload;
+}
+
+async function previewBulkImport(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || ui.bulkUpload.isPreviewing) return;
+  const spreadsheetFiles = files.filter((file) => ["csv", "xlsx"].includes(getFileExtension(file.name).toLowerCase()));
+  if (spreadsheetFiles.length !== files.length) {
+    alert("Import preview accepts CSV and XLSX files only.");
+    return;
+  }
+  if (!ui.api.connected) {
+    alert("Import preview requires the backend database connection.");
+    return;
+  }
+  ui.bulkUpload.isPreviewing = true;
+  renderSection();
+  try {
+    const payload = await requestBulkUploadBackend(spreadsheetFiles, { previewOnly: true });
+    ui.bulkUpload.pendingImportFiles = spreadsheetFiles;
+    ui.bulkUpload.preview = payload;
+    recordActivity("bulk-upload", `Previewed ${spreadsheetFiles.length} spreadsheet file(s); no records saved`);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Import preview failed.");
+  } finally {
+    ui.bulkUpload.isPreviewing = false;
+    renderSection();
+  }
+}
+
+async function handleBulkUploadViaBackend(files) {
+  const payload = await requestBulkUploadBackend(files);
 
   const addedCandidates = Array.isArray(payload.addedCandidates) ? payload.addedCandidates.map(mapApiCandidateToLocal) : [];
   const duplicates = Array.isArray(payload.duplicates)
@@ -9598,6 +10251,7 @@ function mapApiCandidateToLocal(candidate) {
     overallRating: tracking.overallRating,
     ratingNotes: tracking.ratingNotes,
     createdAt: String(input.createdAt || todayISO()),
+    updatedAt: String(input.updatedAt || input.createdAt || todayISO()),
     experienceYears:
       typeof input.experienceYears === "number" && Number.isFinite(input.experienceYears)
         ? input.experienceYears

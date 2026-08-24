@@ -140,6 +140,38 @@ test("bulk CSV processing returns a blocked result and performs no candidate ins
   }
 });
 
+test("spreadsheet preview parses and duplicate-checks without inserting candidates", async () => {
+  const originalParseCsv = cvParserService.parseCsv;
+  const originalFindPotentialMatches = candidateStoreService.findPotentialMatches;
+  const originalAddActiveCandidateIfUnique = candidateStoreService.addActiveCandidateIfUnique;
+  let insertCalls = 0;
+
+  cvParserService.parseCsv = async () => [parsedCandidate];
+  candidateStoreService.findPotentialMatches = async () => [];
+  candidateStoreService.addActiveCandidateIfUnique = async () => {
+    insertCalls += 1;
+    return { candidate: storedCandidate, matches: [] };
+  };
+
+  try {
+    const service = new BulkUploadService();
+    const response = await service.processFiles(
+      [{ originalname: "preview.csv", mimetype: "text/csv", size: 50, buffer: Buffer.from("name,email") } as Express.Multer.File],
+      { id: "recruiter-1", name: "Recruiter One", email: "recruiter@agodly.com" },
+      { previewOnly: true }
+    );
+
+    assert.equal(insertCalls, 0);
+    assert.equal(response.addedCandidates.length, 0);
+    assert.equal(response.previewCandidates.length, 1);
+    assert.equal(response.summary.addedCandidates, 1);
+  } finally {
+    cvParserService.parseCsv = originalParseCsv;
+    candidateStoreService.findPotentialMatches = originalFindPotentialMatches;
+    candidateStoreService.addActiveCandidateIfUnique = originalAddActiveCandidateIfUnique;
+  }
+});
+
 test("bulk upload blocks duplicates without creating pending database records or orphan resumes", async () => {
   const root = process.cwd();
   const bulkService = await readFile(path.join(root, "lib/server/services/bulk-upload.service.ts"), "utf8");

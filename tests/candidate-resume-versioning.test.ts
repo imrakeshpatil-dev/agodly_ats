@@ -81,10 +81,10 @@ test("CV replacement is additive and never overwrites manual candidate profile f
   assert.equal(versions[1].fileName, "old.pdf");
 });
 
-test("candidate UI labels CSV as import source and removes raw JSON recruiter controls", () => {
+test("candidate UI labels spreadsheets as import sources and removes raw JSON recruiter controls", () => {
   const browser = fs.readFileSync(path.join(process.cwd(), "app.js"), "utf8");
 
-  assert.match(browser, /CSV import provenance only — this is not a candidate CV/);
+  assert.match(browser, /Spreadsheet import provenance only — this is not a candidate CV/);
   assert.match(browser, /Apply Parsed Data to Draft/);
   assert.match(browser, /Upload CV/);
   assert.match(browser, /Replace CV/);

@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import { parse } from "csv-parse/sync";
+import JSZip from "jszip";
 
 import { parseResumeWithAIResult, ResumeAIParseResult, ResumeStructuredData } from "./resumeAIParser";
 import { CandidateInput } from "../types/candidate";
@@ -79,6 +80,26 @@ export class CvParserService {
       .filter((item): item is CandidateInput => Boolean(item));
   }
 
+  async parseSpreadsheet(buffer: Buffer, sourceFileName: string): Promise<CandidateInput[]> {
+    const zip = await JSZip.loadAsync(buffer);
+    const sharedStringsXml = await zip.file("xl/sharedStrings.xml")?.async("string");
+    const sharedStrings = parseXlsxSharedStrings(sharedStringsXml || "");
+    const sheetFile = zip.file("xl/worksheets/sheet1.xml") || Object.values(zip.files).find((entry) => /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.name));
+    if (!sheetFile) return [];
+    const rows = parseXlsxRows(await sheetFile.async("string"), sharedStrings);
+    const headers = rows[0] || [];
+    const candidates: CandidateInput[] = [];
+    rows.slice(1).forEach((row, index) => {
+      const record: Record<string, string> = {};
+      headers.forEach((header, columnIndex) => {
+        if (header) record[header] = String(row[columnIndex] || "").trim();
+      });
+      const candidate = this.mapCsvRow(record, sourceFileName, index, "Excel");
+      if (candidate) candidates.push(candidate);
+    });
+    return candidates;
+  }
+
   async parseResumeFile(buffer: Buffer, extension: string, fileName: string): Promise<CandidateInput> {
     if (extension === "pdf") {
       const parsed = await pdfParse(buffer);
@@ -122,7 +143,12 @@ export class CvParserService {
     }
   }
 
-  private mapCsvRow(row: Record<string, string>, sourceFileName: string, index: number): CandidateInput | null {
+  private mapCsvRow(
+    row: Record<string, string>,
+    sourceFileName: string,
+    index: number,
+    sourceKind = "CSV"
+  ): CandidateInput | null {
     const get = (...keys: string[]): string => {
       for (const key of keys) {
         const normalized = key.toLowerCase().trim();
@@ -165,7 +191,7 @@ export class CvParserService {
       location: sanitizeLocation(location),
       education: sanitizeEducation(education),
       currentCompany: sanitizeCompany(currentCompany),
-      source: `CSV Upload (${sourceFileName})`
+      source: `${sourceKind} Upload (${sourceFileName})`
     };
   }
 
@@ -391,9 +417,49 @@ const clampExperience = (value: number | null): number | null => {
   return Math.round(bounded * 10) / 10;
 };
 
+const decodeXlsxXml = (value: string): string =>
+  String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+
+const parseXlsxTextNodes = (xml: string): string =>
+  [...String(xml || "").matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)]
+    .map((match) => decodeXlsxXml(match[1]))
+    .join("");
+
+const parseXlsxSharedStrings = (xml: string): string[] =>
+  [...String(xml || "").matchAll(/<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g)].map((match) => parseXlsxTextNodes(match[1]));
+
+const xlsxColumnIndex = (reference: string): number => {
+  const letters = String(reference || "").match(/[A-Z]+/i)?.[0]?.toUpperCase() || "A";
+  return letters.split("").reduce((total, letter) => total * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+};
+
+const parseXlsxRows = (xml: string, sharedStrings: string[]): string[][] =>
+  [...String(xml || "").matchAll(/<row(?:\s[^>]*)?>([\s\S]*?)<\/row>/g)].map((rowMatch) => {
+    const cells: string[] = [];
+    for (const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const attributes = cellMatch[1];
+      const body = cellMatch[2];
+      const reference = attributes.match(/\br="([^"]+)"/)?.[1] || "A1";
+      const type = attributes.match(/\bt="([^"]+)"/)?.[1] || "";
+      const rawValue = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || "";
+      let value = decodeXlsxXml(rawValue);
+      if (type === "s") value = sharedStrings[Number(rawValue)] || "";
+      if (type === "inlineStr") value = parseXlsxTextNodes(body);
+      if (type === "b") value = rawValue === "1" ? "TRUE" : "FALSE";
+      cells[xlsxColumnIndex(reference)] = value;
+    }
+    return cells;
+  });
+
 const extractExperience = (value: string): number | null => {
   const text = String(value || "").toLowerCase();
   if (!text) return null;
+  if (/^\d+(?:\.\d+)?$/.test(text.trim())) return clampExperience(Number(text));
 
   const totalMatch = text.match(
     /(?:total\s+experience|experience)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:\+)?\s*(?:years|year|yrs|yr|y)\s*(?:(\d{1,2})\s*(?:months|month|mos))?/i

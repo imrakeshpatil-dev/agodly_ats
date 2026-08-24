@@ -113,6 +113,7 @@ export interface BulkUploadResponse {
   };
   results: UploadFileResult[];
   addedCandidates: CandidateRecord[];
+  previewCandidates: CandidateInput[];
   blockedDuplicates: BlockedDuplicateUpload[];
   duplicates: DuplicateGroup[];
 }

@@ -19,12 +19,13 @@ export const parseBulkUpload = async (req: Request, res: Response): Promise<void
   if (authUser.role === "Viewer") {
     throw new AppError("Viewer access is read-only and cannot upload candidates", 403);
   }
+  const previewOnly = String((req.body as { previewOnly?: unknown } | undefined)?.previewOnly || "") === "true";
 
   const response = await bulkUploadService.processFiles(files, {
     id: authUser.id,
     name: authUser.name,
     email: authUser.email
-  });
+  }, { previewOnly });
   const safeResponse = isFounderRole(authUser.role)
     ? response
     : {
@@ -36,7 +37,7 @@ export const parseBulkUpload = async (req: Request, res: Response): Promise<void
         duplicates: []
       };
 
-  if (!isFounderRole(authUser.role)) {
+  if (!previewOnly && !isFounderRole(authUser.role)) {
     await appStateStoreService.recordBulkUploadForUser(authUser.id, {
       totalFiles: safeResponse.summary.totalFiles,
       pending: safeResponse.summary.pending,

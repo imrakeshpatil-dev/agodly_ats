@@ -11,7 +11,11 @@ import { cvParserService } from "./cv-parser.service";
 export class BulkUploadService {
   private readonly resumeDir = resolveRuntimeDataPath("resumes");
 
-  async processFiles(files: Express.Multer.File[], actor: BulkUploadActor): Promise<BulkUploadResponse> {
+  async processFiles(
+    files: Express.Multer.File[],
+    actor: BulkUploadActor,
+    options: { previewOnly?: boolean } = {}
+  ): Promise<BulkUploadResponse> {
     const summary: BulkUploadResponse["summary"] = {
       totalFiles: files.length,
       pending: files.length,
@@ -23,6 +27,7 @@ export class BulkUploadService {
 
     const results: UploadFileResult[] = [];
     const addedCandidates: CandidateRecord[] = [];
+    const previewCandidates: CandidateInput[] = [];
     const blockedDuplicates: BulkUploadResponse["blockedDuplicates"] = [];
 
     for (const file of files) {
@@ -34,6 +39,8 @@ export class BulkUploadService {
 
         if (extension === "csv") {
           parsedCandidates = await cvParserService.parseCsv(file.buffer, file.originalname);
+        } else if (extension === "xlsx") {
+          parsedCandidates = await cvParserService.parseSpreadsheet(file.buffer, file.originalname);
         } else if (["pdf", "doc", "docx"].includes(extension)) {
           parsedCandidates = [await cvParserService.parseResumeFile(file.buffer, extension, file.originalname)];
         } else {
@@ -69,6 +76,13 @@ export class BulkUploadService {
             recordBlockedDuplicate(candidateInput, preflightMatches, blockedDuplicates, blockedReasons);
             duplicateForFile += 1;
             summary.duplicateCandidates += 1;
+            continue;
+          }
+
+          if (options.previewOnly) {
+            previewCandidates.push(candidateInput);
+            addedForFile += 1;
+            summary.addedCandidates += 1;
             continue;
           }
 
@@ -115,7 +129,7 @@ export class BulkUploadService {
           added: addedForFile,
           blocked: duplicateForFile,
           message:
-            extension === "csv"
+            ["csv", "xlsx"].includes(extension)
               ? buildCsvParseMessage(parsedCandidates.length, addedForFile, duplicateForFile)
               : buildResumeParseMessage(parserModes, duplicateForFile, blockedReasons)
         });
@@ -140,6 +154,7 @@ export class BulkUploadService {
       summary,
       results,
       addedCandidates,
+      previewCandidates,
       blockedDuplicates,
       duplicates: []
     };
@@ -202,8 +217,8 @@ const recordBlockedDuplicate = (
 };
 
 const buildSourceLabel = (extension: string, fileName: string): string => {
-  if (extension === "csv") {
-    return `CSV Upload (${fileName})`;
+  if (["csv", "xlsx"].includes(extension)) {
+    return `${extension === "xlsx" ? "Excel" : "CSV"} Upload (${fileName})`;
   }
   return `Resume Upload (${fileName})`;
 };
