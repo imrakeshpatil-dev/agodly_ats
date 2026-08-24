@@ -55,6 +55,31 @@ class AppStateStoreService {
     return this.state.users.map((item) => ({ ...item }));
   }
 
+  async getJobs(): Promise<Array<Record<string, unknown>>> {
+    await this.ensureLoaded();
+    return this.state.jobs.map((item) => ({ ...item }));
+  }
+
+  async getClients(): Promise<Array<Record<string, unknown>>> {
+    await this.ensureLoaded();
+    return this.state.clients.map((item) => ({ ...item }));
+  }
+
+  async getJobReferences(jobId: string): Promise<{ interviews: number; submissions: number }> {
+    await this.ensureLoaded();
+    const wantedId = String(jobId || "").trim();
+    return {
+      interviews: this.state.interviews.filter((item) => String(item.jobId || "").trim() === wantedId).length,
+      submissions: this.state.placements.filter((item) => String(item.jobId || "").trim() === wantedId).length
+    };
+  }
+
+  async mirrorJobs(jobs: Array<Record<string, unknown>>): Promise<void> {
+    await this.ensureLoaded();
+    this.state.jobs = normalizeRows(jobs, []);
+    await this.persist();
+  }
+
   /**
    * Sets a stored user's password hash in place, preserving every other field.
    * Matches by id first, then by (case-insensitive) email. Returns false when no

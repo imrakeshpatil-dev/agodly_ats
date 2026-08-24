@@ -48,28 +48,101 @@ model Candidate {
 }
 
 model Job {
-  id              String    @id @default(cuid())
-  title           String
-  clientId        String?
-  description     String?
-  requiredSkills  Json      @default("[]")
-  preferredSkills Json      @default("[]")
-  minExperience   Float?
-  maxExperience   Float?
-  location        String?
-  workMode        String?
-  jobType         String?
-  openings        Int       @default(1)
-  currency        String    @default("INR")
-  minCtcLpa       Float?
-  maxCtcLpa       Float?
-  status          String    @default("DRAFT")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  client          Client?   @relation(fields: [clientId], references: [id])
+  id                     String    @id @default(cuid())
+  referenceNo            String?   @unique
+  title                  String
+  clientId               String?
+  description            String?
+  jdText                 String?
+  requiredSkills         Json      @default("[]")
+  preferredSkills        Json      @default("[]")
+  minExperience          Float?
+  maxExperience          Float?
+  location               String?
+  locations              Json      @default("[]")
+  workMode               String?
+  remoteScope            String?
+  country                String?
+  state                  String?
+  city                   String?
+  primaryTimeZone        String?
+  supportedTimeZones     Json      @default("[]")
+  workingHours           String?
+  minTimeZoneOverlap     Int?
+  jobType                String?
+  openings               Int       @default(1)
+  currency               String    @default("INR")
+  minCtcLpa              Float?
+  maxCtcLpa              Float?
+  minBillingRate         Float?
+  maxBillingRate         Float?
+  billingRateType        String?
+  compensationUndisclosed Boolean  @default(false)
+  priority               String    @default("NORMAL")
+  status                 String    @default("DRAFT")
+  statusReason           String?
+  ownerUserId            String?
+  assignedRecruiterId    String?
+  createdByUserId        String?
+  updatedByUserId        String?
+  openedAt               DateTime?
+  targetClosureAt        DateTime?
+  closedAt               DateTime?
+  archivedAt             DateTime?
+  legacyData             Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  client                 Client?   @relation(fields: [clientId], references: [id])
 
   @@index([status, createdAt])
   @@index([clientId])
+  @@index([assignedRecruiterId])
+  @@index([archivedAt])
+}
+
+model JobAudit {
+  id         String   @id @default(cuid())
+  jobId      String
+  jobTitle   String
+  actorId    String?
+  actorName  String?
+  action     String
+  fromStatus String?
+  toStatus   String?
+  reason     String?
+  changes    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model CandidatePool {
+  id              String                @id @default(cuid())
+  name            String
+  techStack       String
+  sourceJobId     String?
+  criteria        Json                  @default("{}")
+  sourceInsight   Json?
+  createdByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  members         CandidatePoolMember[]
+
+  @@index([techStack, createdAt])
+  @@index([createdByUserId])
+}
+
+model CandidatePoolMember {
+  id          String        @id @default(cuid())
+  poolId      String
+  candidateId String
+  matchReason Json?
+  addedAt     DateTime      @default(now())
+  pool        CandidatePool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, candidateId])
+  @@index([candidateId])
 }
 
 model Client {

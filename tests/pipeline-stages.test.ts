@@ -58,3 +58,18 @@ test("pipeline board supports visible and gesture-based horizontal navigation", 
   assert.match(styles, /\.section-container > \.panel \{[\s\S]*min-width: 0/);
   assert.match(styles, /\.pipeline-board \{[\s\S]*max-width: 100%/);
 });
+
+test("pipeline can filter visible candidates by recruiter and linked job role", () => {
+  const browser = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
+  const styles = fs.readFileSync(path.join(projectRoot, "styles.css"), "utf8");
+
+  assert.match(browser, /pipelineRecruiterFilter: "all"/);
+  assert.match(browser, /pipelineJobFilter: "all"/);
+  assert.match(browser, /data-action="pipeline-recruiter-filter"/);
+  assert.match(browser, /data-action="pipeline-job-filter"/);
+  assert.match(browser, /function getPipelineRecruiterOptions\(candidates\)/);
+  assert.match(browser, /function getPipelineJobOptions\(candidates\)/);
+  assert.match(browser, /function comparePipelineCandidates\(left, right\)/);
+  assert.match(browser, /Showing \$\{candidates\.length\} of \$\{visibleCandidates\.length\} candidates/);
+  assert.match(styles, /\.pipeline-filter-field/);
+});

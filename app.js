@@ -37,7 +37,15 @@ const API_ROUTES = {
   restoreCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/restore`,
   aiChat: "/api/ai/chat",
   aiFeedback: "/api/ai/feedback",
-  aiMatchScore: "/api/ai/match-score"
+  aiMatchScore: "/api/ai/match-score",
+  jobs: "/api/jobs",
+  job: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}`,
+  jobStatus: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/status`,
+  jobArchive: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/archive`,
+  jobDuplicate: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/duplicate`,
+  jobCandidatePool: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/candidate-pool`,
+  jobInsights: "/api/jobs/insights",
+  insightCandidatePool: "/api/jobs/insights/candidate-pool"
 };
 const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "pdf", "doc", "docx"]);
@@ -62,6 +70,21 @@ const CLOSURE_TYPE_OPTIONS = ["FTE", "Contractual"];
 const TRACKING_STATUS_OPTIONS = ["Not Screened", "Screened", "Rejected", "Submitted", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
 const JOB_TYPE_OPTIONS = ["FTE", "C2C", "C2H"];
 const BILLING_RATE_TYPE_OPTIONS = ["Monthly", "Hourly"];
+const JOB_STATUS_OPTIONS = ["DRAFT", "ACTIVE", "PAUSED", "ON_HOLD", "FILLED", "CLOSED", "CANCELLED", "ARCHIVED"];
+const JOB_PRIORITY_OPTIONS = ["CRITICAL", "HIGH", "NORMAL", "LOW"];
+const JOB_TIME_ZONE_OPTIONS = [
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+  "UTC"
+];
 const AI_SKILL_CATALOG = [
   "typescript",
   "javascript",
@@ -346,6 +369,8 @@ const ui = {
   search: "",
   period: "all",
   pipelineFilter: "all",
+  pipelineRecruiterFilter: "all",
+  pipelineJobFilter: "all",
   aiMatch: {
     prompt: "",
     jdText: "",
@@ -389,7 +414,14 @@ const ui = {
     search: "",
     statusFilter: "active",
     clientFilter: "all",
-    draft: createJobDraft()
+    draft: createJobDraft(),
+    insights: null,
+    insightsLoading: false,
+    insightsError: "",
+    auditJobId: "",
+    auditEntries: [],
+    auditLoading: false,
+    isSaving: false
   },
   bulkUpload: {
     isProcessing: false
@@ -689,6 +721,8 @@ function onSectionClick(event) {
 
   if (action === "clear-pipeline-filter") {
     ui.pipelineFilter = "all";
+    ui.pipelineRecruiterFilter = "all";
+    ui.pipelineJobFilter = "all";
     renderSection();
     return;
   }
@@ -995,12 +1029,12 @@ function onSectionClick(event) {
   }
 
   if (action === "save-job-draft") {
-    submitJobDraft("Draft");
+    void submitJobDraft("DRAFT");
     return;
   }
 
   if (action === "create-job-publish") {
-    submitJobDraft("Open");
+    void submitJobDraft("ACTIVE");
     return;
   }
 
@@ -1010,6 +1044,73 @@ function onSectionClick(event) {
     if (!job) return;
     ui.jobs.draft = createJobDraft(job);
     ui.jobs.mode = "create";
+    renderSection();
+    return;
+  }
+
+  if (action === "duplicate-job") {
+    void duplicateJobViaApi(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "archive-job") {
+    void archiveJobViaApi(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "delete-job-permanently") {
+    void permanentlyDeleteJobViaApi(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "build-job-candidate-pool") {
+    void createCandidatePoolFromJob(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "build-insight-candidate-pool") {
+    void createCandidatePoolFromInsight(actionNode.dataset.insightKey || "");
+    return;
+  }
+
+  if (action === "refresh-job-insights") {
+    invalidateJobInsights();
+    void loadJobInsights();
+    return;
+  }
+
+  if (action === "view-job-audit") {
+    void loadJobAudit(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "close-job-audit") {
+    ui.jobs.auditJobId = "";
+    ui.jobs.auditEntries = [];
+    renderSection();
+    return;
+  }
+
+  if (action === "add-job-location") {
+    addJobLocationFromInput();
+    return;
+  }
+
+  if (action === "remove-job-location") {
+    const location = actionNode.dataset.location || "";
+    ui.jobs.draft.locations = (ui.jobs.draft.locations || []).filter((item) => String(item).toLowerCase() !== location.toLowerCase());
+    renderSection();
+    return;
+  }
+
+  if (action === "add-job-timezone") {
+    addJobTimeZoneFromInput();
+    return;
+  }
+
+  if (action === "remove-job-timezone") {
+    const timeZone = actionNode.dataset.timeZone || "";
+    ui.jobs.draft.supportedTimeZones = (ui.jobs.draft.supportedTimeZones || []).filter((item) => String(item) !== timeZone);
     renderSection();
     return;
   }
@@ -1043,6 +1144,18 @@ function onSectionChange(event) {
 
   if (event.target.matches("[data-action='pipeline-filter']")) {
     ui.pipelineFilter = event.target.value;
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='pipeline-recruiter-filter']")) {
+    ui.pipelineRecruiterFilter = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='pipeline-job-filter']")) {
+    ui.pipelineJobFilter = event.target.value || "all";
     renderSection();
     return;
   }
@@ -1153,18 +1266,41 @@ function onSectionChange(event) {
     return;
   }
 
+  if (event.target.matches("[data-action='job-status-change']")) {
+    const jobId = event.target.dataset.jobId || "";
+    const status = event.target.value;
+    void changeJobStatusViaApi(jobId, status);
+    return;
+  }
+
   if (event.target.matches("[data-action='job-client']")) {
     ui.jobs.draft.clientId = event.target.value;
     return;
   }
 
-  if (event.target.matches("[data-action='job-locations']")) {
-    ui.jobs.draft.locations = Array.from(event.target.selectedOptions).map((option) => option.value);
+  if (event.target.matches("[data-action='job-primary-timezone']")) {
+    ui.jobs.draft.primaryTimeZone = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-supported-timezone-entry']")) {
+    ui.jobs.draft.timeZoneEntry = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-remote-scope']")) {
+    ui.jobs.draft.remoteScope = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-priority']")) {
+    ui.jobs.draft.priority = event.target.value;
     return;
   }
 
   if (event.target.matches("[data-action='job-work-mode']")) {
     ui.jobs.draft.workMode = event.target.value;
+    renderSection();
     return;
   }
 
@@ -1236,6 +1372,36 @@ function onSectionInput(event) {
 
   if (event.target.matches("[data-action='job-title']")) {
     ui.jobs.draft.title = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-location-entry']")) {
+    ui.jobs.draft.locationEntry = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-country']")) {
+    ui.jobs.draft.country = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-state']")) {
+    ui.jobs.draft.state = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-city']")) {
+    ui.jobs.draft.city = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-working-hours']")) {
+    ui.jobs.draft.workingHours = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-timezone-overlap']")) {
+    ui.jobs.draft.minTimeZoneOverlap = event.target.value;
     return;
   }
 
@@ -1333,6 +1499,12 @@ function onSectionKeydown(event) {
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
     renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='job-location-entry']") && event.key === "Enter") {
+    event.preventDefault();
+    addJobLocationFromInput();
     return;
   }
 
@@ -2877,8 +3049,14 @@ function renderJobsSection() {
 
 function renderJobsListSection() {
   const jobs = filteredJobs({ includeJobsFilters: true });
+  const canDeletePermanently = canCurrentUserAccessFounderWorkspace();
+  if (!ui.jobs.insightsLoading && !Array.isArray(ui.jobs.insights) && !ui.jobs.insightsError) {
+    queueMicrotask(() => void loadJobInsights());
+  }
 
   return `
+    ${renderHiringDemandInsights()}
+
     <section class="panel">
       <div class="jobs-header">
         <div>
@@ -2896,11 +3074,11 @@ function renderJobsListSection() {
           placeholder="Search jobs..."
         />
         <select data-action="jobs-status-filter">
-          ${["all", "active", "draft", "paused", "closed"]
+          ${["all", "active", "draft", "paused", "on_hold", "filled", "closed", "cancelled", "archived"]
             .map(
               (value) =>
                 `<option value="${value}" ${ui.jobs.statusFilter === value ? "selected" : ""}>${
-                  value === "all" ? "All status" : toTitleCase(value)
+                  value === "all" ? "All status" : displayJobStatus(value)
                 }</option>`
             )
             .join("")}
@@ -2922,12 +3100,12 @@ function renderJobsListSection() {
         jobs.length
           ? `
         <div class="table-wrap">
-          <table>
+          <table class="jobs-table">
             <thead>
               <tr>
                 <th>Role</th>
                 <th>Client</th>
-                <th>Location</th>
+                <th>Arrangement</th>
                 <th>Status</th>
                 <th>Openings</th>
                 <th>Role Type</th>
@@ -2944,14 +3122,32 @@ function renderJobsListSection() {
                     <tr>
                       <td>${escapeHtml(job.title)}</td>
                       <td>${escapeHtml(client?.name || "Unassigned")}</td>
-                      <td>${escapeHtml(job.location || "-")}</td>
-                      <td>${statusBadge(displayJobStatus(job.status))}</td>
+                      <td>
+                        <strong>${escapeHtml(normalizeWorkModeLabel(job.workMode))}</strong>
+                        <span class="jobs-cell-note">${escapeHtml(job.location || job.remoteScope || "-")}</span>
+                        <span class="jobs-cell-note">${escapeHtml(job.primaryTimeZone || "No time zone")}</span>
+                      </td>
+                      <td>
+                        <select class="job-status-select" data-action="job-status-change" data-job-id="${escapeHtml(job.id)}" aria-label="Change status for ${escapeHtml(job.title)}">
+                          ${JOB_STATUS_OPTIONS.map((status) => `<option value="${status}" ${normalizeJobStatus(job.status) === status ? "selected" : ""}>${displayJobStatus(status)}</option>`).join("")}
+                        </select>
+                      </td>
                       <td>${Number(job.openings || 0)}</td>
                       <td>${statusBadge(normalizeJobType(job.jobType))}</td>
                       <td>${escapeHtml(formatJobCommercials(job))}</td>
                       <td>${escapeHtml((job.requiredSkills || []).join(", ") || "-")}</td>
                       <td>
-                        <button class="tool-btn" type="button" data-action="edit-job" data-job-id="${escapeHtml(job.id)}">Edit</button>
+                        <details class="job-actions-menu">
+                          <summary class="tool-btn" aria-label="Actions for ${escapeHtml(job.title)}">Actions</summary>
+                          <div class="job-actions-popover">
+                            <button type="button" data-action="edit-job" data-job-id="${escapeHtml(job.id)}">Edit job</button>
+                            <button type="button" data-action="view-job-audit" data-job-id="${escapeHtml(job.id)}">View history</button>
+                            <button type="button" data-action="duplicate-job" data-job-id="${escapeHtml(job.id)}">Duplicate as draft</button>
+                            <button type="button" data-action="build-job-candidate-pool" data-job-id="${escapeHtml(job.id)}">Build candidate pool</button>
+                            ${normalizeJobStatus(job.status) !== "ARCHIVED" ? `<button type="button" data-action="archive-job" data-job-id="${escapeHtml(job.id)}">Archive safely</button>` : ""}
+                            ${canDeletePermanently ? `<button class="danger" type="button" data-action="delete-job-permanently" data-job-id="${escapeHtml(job.id)}">Delete permanently</button>` : ""}
+                          </div>
+                        </details>
                       </td>
                     </tr>
                   `;
@@ -2970,6 +3166,72 @@ function renderJobsListSection() {
       `
       }
     </section>
+    ${renderJobAuditPanel()}
+  `;
+}
+
+function renderHiringDemandInsights() {
+  const insights = Array.isArray(ui.jobs.insights) ? ui.jobs.insights : [];
+  return `
+    <section class="panel demand-insights-panel">
+      <div class="jobs-header">
+        <div>
+          <p class="jobs-eyebrow">Historical demand</p>
+          <h2 class="panel-title">Hiring Demand Insights</h2>
+          <p class="panel-subtitle">Recommendations use recorded job frequency and current candidate supply; no demand is invented.</p>
+        </div>
+        <button class="tool-btn" type="button" data-action="refresh-job-insights" ${ui.jobs.insightsLoading ? "disabled" : ""}>${ui.jobs.insightsLoading ? "Analysing…" : "Refresh"}</button>
+      </div>
+      ${ui.jobs.insightsError ? `<p class="form-error">${escapeHtml(ui.jobs.insightsError)}</p>` : ""}
+      ${ui.jobs.insightsLoading && !insights.length ? `<div class="jobs-insight-empty">Analysing historical requirements…</div>` : ""}
+      ${!ui.jobs.insightsLoading && !insights.length && !ui.jobs.insightsError ? `<div class="jobs-insight-empty">Insights will appear after published job history is available.</div>` : ""}
+      ${insights.length ? `
+        <div class="demand-insights-grid">
+          ${insights.slice(0, 6).map((insight) => `
+            <article class="demand-insight-card">
+              <div class="demand-insight-head">
+                <div><h3>${escapeHtml(insight.label)}</h3><p>${Number(insight.jobs12m || 0)} jobs / ${Number(insight.openings12m || 0)} openings in 12 months</p></div>
+                <span class="demand-gap ${Number(insight.supplyGap || 0) > 0 ? "has-gap" : ""}">${Number(insight.supplyGap || 0)} gap</span>
+              </div>
+              <div class="demand-stats">
+                <span><strong>${Number(insight.jobs3m || 0)}</strong>3 mo</span>
+                <span><strong>${Number(insight.jobs6m || 0)}</strong>6 mo</span>
+                <span><strong>${insight.averageFrequencyDays ? `${Number(insight.averageFrequencyDays)}d` : "—"}</strong>frequency</span>
+                <span><strong>${Number(insight.availableCandidates || 0)}</strong>available</span>
+              </div>
+              <p class="demand-recommendation">Recommended pool: ${Number(insight.recommendedPoolSize || 0)} candidates${insight.commonLocations?.length ? ` · ${escapeHtml(insight.commonLocations.join(", "))}` : ""}</p>
+              <div class="jobs-chip-wrap">${(insight.skills || []).slice(0, 5).map((skill) => `<span class="skill-pill">${escapeHtml(skill)}</span>`).join("")}</div>
+              <button class="tool-btn primary" type="button" data-action="build-insight-candidate-pool" data-insight-key="${escapeHtml(insight.key)}">Build Pool</button>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderJobAuditPanel() {
+  if (!ui.jobs.auditJobId) return "";
+  const job = findById(state.jobs, ui.jobs.auditJobId);
+  return `
+    <section class="panel job-audit-panel" aria-live="polite">
+      <div class="jobs-header">
+        <div><p class="jobs-eyebrow">Immutable activity history</p><h2 class="panel-title">${escapeHtml(job?.title || "Job")} audit trail</h2></div>
+        <button class="tool-btn" type="button" data-action="close-job-audit">Close</button>
+      </div>
+      ${ui.jobs.auditLoading ? `<p class="panel-subtitle">Loading history…</p>` : ""}
+      ${!ui.jobs.auditLoading && !ui.jobs.auditEntries.length ? `<p class="panel-subtitle">No audit entries recorded yet.</p>` : ""}
+      <ol class="job-audit-list">
+        ${ui.jobs.auditEntries.map((entry) => `
+          <li><span class="job-audit-dot"></span><div>
+            <strong>${escapeHtml(String(entry.action || "Updated").replaceAll("_", " "))}</strong>
+            <p>${escapeHtml(entry.actorName || "System")} · ${escapeHtml(formatDate(entry.createdAt))}</p>
+            ${entry.fromStatus || entry.toStatus ? `<p>${escapeHtml(displayJobStatus(entry.fromStatus || "DRAFT"))} → ${escapeHtml(displayJobStatus(entry.toStatus || entry.fromStatus))}</p>` : ""}
+            ${entry.reason ? `<p class="job-audit-reason">${escapeHtml(entry.reason)}</p>` : ""}
+          </div></li>
+        `).join("")}
+      </ol>
+    </section>
   `;
 }
 
@@ -2985,13 +3247,14 @@ function renderCreateJobSection() {
       <div class="jobs-create-header">
         <button class="tool-btn" type="button" data-action="back-to-jobs">&larr;</button>
         <div>
-          <h2 class="panel-title">Create Job</h2>
-          <p class="panel-subtitle">Add a new job posting to your recruitment pipeline</p>
+          <h2 class="panel-title">${draft.id ? "Edit Job" : "Create Job"}</h2>
+          <p class="panel-subtitle">Start with the essentials. Publishing validates the full requirement; drafts can remain incomplete.</p>
         </div>
       </div>
     </section>
 
-    <section class="panel">
+    <details class="panel jobs-jd-assist" ${draft.jdText ? "open" : ""}>
+      <summary><span><strong>Paste Job Description</strong><small>Optional · auto-fill title, experience, skills, locations and work mode</small></span></summary>
       <div class="jobs-subhead">
         <div>
           <h3 class="jobs-block-title">Job Description</h3>
@@ -3006,10 +3269,11 @@ function renderCreateJobSection() {
         placeholder="Paste your job description here..."
       >${escapeHtml(draft.jdText || "")}</textarea>
       <p class="panel-subtitle">Paste a JD and click "Auto-Fill from JD" to extract title, skills, experience, and details.</p>
-    </section>
+    </details>
 
-    <section class="panel">
-      <h3 class="jobs-block-title">Basic Information</h3>
+    <section class="panel jobs-essential-panel">
+      <p class="jobs-eyebrow">Quick create</p>
+      <h3 class="jobs-block-title">Essential information</h3>
       <div class="job-form-grid">
         <label class="dialog-field">
           <span>Job Title *</span>
@@ -3032,20 +3296,17 @@ function renderCreateJobSection() {
           </select>
         </div>
 
-        <label class="dialog-field job-wide">
-          <span>Locations (India)</span>
-          <select data-action="job-locations" multiple size="4">
-            ${INDIA_CITY_OPTIONS.map(
-              (city) => `<option value="${escapeHtml(city)}" ${selectedLocations.includes(city) ? "selected" : ""}>${escapeHtml(city)}</option>`
-            ).join("")}
-          </select>
-          <span class="jobs-help">Hold Ctrl/Cmd to select multiple cities.</span>
-        </label>
-
         <label class="dialog-field">
           <span>Work Mode</span>
           <select data-action="job-work-mode">
             ${["Onsite", "Hybrid", "Remote"].map((mode) => `<option value="${mode}" ${draft.workMode === mode ? "selected" : ""}>${mode}</option>`).join("")}
+          </select>
+        </label>
+
+        <label class="dialog-field">
+          <span>Priority</span>
+          <select data-action="job-priority">
+            ${JOB_PRIORITY_OPTIONS.map((priority) => `<option value="${priority}" ${draft.priority === priority ? "selected" : ""}>${toTitleCase(priority.toLowerCase())}</option>`).join("")}
           </select>
         </label>
 
@@ -3066,6 +3327,48 @@ function renderCreateJobSection() {
     </section>
 
     <section class="panel">
+      <h3 class="jobs-block-title">Location &amp; time-zone coverage</h3>
+      <div class="job-form-grid">
+        ${draft.workMode === "Remote" ? `
+          <label class="dialog-field">
+            <span>Remote coverage</span>
+            <select data-action="job-remote-scope">
+              ${["City", "State", "India", "Selected countries", "Region", "Worldwide"].map((scope) => `<option value="${scope}" ${draft.remoteScope === scope ? "selected" : ""}>${scope}</option>`).join("")}
+            </select>
+          </label>
+        ` : ""}
+        <label class="dialog-field"><span>Country</span><input data-action="job-country" value="${escapeHtml(draft.country || "")}" placeholder="India" /></label>
+        <label class="dialog-field"><span>State / region</span><input data-action="job-state" value="${escapeHtml(draft.state || "")}" placeholder="Karnataka" /></label>
+        <label class="dialog-field"><span>Primary city</span><input data-action="job-city" value="${escapeHtml(draft.city || "")}" placeholder="Bengaluru" list="jobCityOptions" /></label>
+        <div class="dialog-field job-wide">
+          <span>Permitted cities / locations ${draft.workMode !== "Remote" ? "*" : ""}</span>
+          <div class="jobs-skill-input">
+            <input id="jobLocationEntry" data-action="job-location-entry" value="${escapeHtml(draft.locationEntry || "")}" placeholder="Add Bengaluru, Hyderabad, Pune…" list="jobCityOptions" />
+            <button class="tool-btn" type="button" data-action="add-job-location">Add</button>
+          </div>
+          <datalist id="jobCityOptions">${INDIA_CITY_OPTIONS.map((city) => `<option value="${escapeHtml(city)}"></option>`).join("")}</datalist>
+          <div class="jobs-chip-wrap">${selectedLocations.length ? selectedLocations.map((location) => `<span class="skill-pill">${escapeHtml(location)}<button class="jobs-chip-remove" type="button" data-action="remove-job-location" data-location="${escapeHtml(location)}" aria-label="Remove ${escapeHtml(location)}">×</button></span>`).join("") : `<span class="panel-subtitle">No locations added.</span>`}</div>
+        </div>
+        <label class="dialog-field">
+          <span>Primary time zone *</span>
+          <select data-action="job-primary-timezone">
+            ${uniqueStringsLocal([draft.primaryTimeZone, ...JOB_TIME_ZONE_OPTIONS]).map((timeZone) => `<option value="${escapeHtml(timeZone)}" ${draft.primaryTimeZone === timeZone ? "selected" : ""}>${escapeHtml(timeZone)}</option>`).join("")}
+          </select>
+        </label>
+        <div class="dialog-field">
+          <span>Additional time zones</span>
+          <div class="jobs-skill-input">
+            <select id="jobSupportedTimeZoneEntry" data-action="job-supported-timezone-entry">${JOB_TIME_ZONE_OPTIONS.map((timeZone) => `<option value="${escapeHtml(timeZone)}">${escapeHtml(timeZone)}</option>`).join("")}</select>
+            <button class="tool-btn" type="button" data-action="add-job-timezone">Add</button>
+          </div>
+          <div class="jobs-chip-wrap">${(draft.supportedTimeZones || []).map((timeZone) => `<span class="skill-pill">${escapeHtml(timeZone)}<button class="jobs-chip-remove" type="button" data-action="remove-job-timezone" data-time-zone="${escapeHtml(timeZone)}" aria-label="Remove ${escapeHtml(timeZone)}">×</button></span>`).join("")}</div>
+        </div>
+        <label class="dialog-field"><span>Required working hours</span><input data-action="job-working-hours" value="${escapeHtml(draft.workingHours || "")}" placeholder="09:00–18:00 IST" /></label>
+        <label class="dialog-field"><span>Minimum overlap (hours)</span><input data-action="job-timezone-overlap" type="number" min="0" max="24" value="${escapeHtml(String(draft.minTimeZoneOverlap || ""))}" placeholder="4" /></label>
+      </div>
+    </section>
+
+    <section class="panel">
       <h3 class="jobs-block-title">Requirements</h3>
       <div class="job-form-grid">
         <div class="dialog-field">
@@ -3076,16 +3379,6 @@ function renderCreateJobSection() {
             <input data-action="job-exp-max" type="number" min="0" step="0.5" placeholder="Max" value="${escapeHtml(String(draft.expMax || ""))}" />
           </div>
         </div>
-
-        <label class="dialog-field">
-          <span>Currency</span>
-          <select data-action="job-currency">
-            <option value="INR" ${draft.currency === "INR" ? "selected" : ""}>INR (₹)</option>
-            <option value="USD" ${draft.currency === "USD" ? "selected" : ""}>USD ($)</option>
-          </select>
-        </label>
-
-        ${renderJobCommercialFields(draft)}
 
         <div class="dialog-field job-wide">
           <span>Required Skills</span>
@@ -3104,30 +3397,36 @@ function renderCreateJobSection() {
           </div>
         </div>
 
+      </div>
+    </section>
+
+    <details class="panel jobs-advanced-panel">
+      <summary><span><strong>Advanced options</strong><small>Commercials and preferred skills</small></span></summary>
+      <div class="job-form-grid jobs-advanced-content">
+        <label class="dialog-field">
+          <span>Currency</span>
+          <select data-action="job-currency">
+            <option value="INR" ${draft.currency === "INR" ? "selected" : ""}>INR (₹)</option>
+            <option value="USD" ${draft.currency === "USD" ? "selected" : ""}>USD ($)</option>
+          </select>
+        </label>
+        ${renderJobCommercialFields(draft)}
         <div class="dialog-field job-wide">
           <span>Preferred Skills (Nice to have)</span>
           <div class="jobs-skill-input">
-            <input
-              id="jobPreferredSkillInput"
-              data-action="job-skill-input"
-              data-skill-type="preferredSkills"
-              type="text"
-              placeholder="Add a skill and press Enter"
-            />
+            <input id="jobPreferredSkillInput" data-action="job-skill-input" data-skill-type="preferredSkills" type="text" placeholder="Add a skill and press Enter" />
             <button class="tool-btn" type="button" data-action="add-job-skill" data-skill-type="preferredSkills">+</button>
           </div>
-          <div class="jobs-chip-wrap">
-            ${renderJobSkillChips(draft.preferredSkills, "preferredSkills")}
-          </div>
+          <div class="jobs-chip-wrap">${renderJobSkillChips(draft.preferredSkills, "preferredSkills")}</div>
         </div>
       </div>
-    </section>
+    </details>
 
     <section class="jobs-footer-actions">
       <button class="tool-btn" type="button" data-action="cancel-job-edit">Cancel</button>
       <div class="jobs-footer-right">
-        <button class="tool-btn" type="button" data-action="save-job-draft">Save as Draft</button>
-        <button class="tool-btn jobs-publish-btn" type="button" data-action="create-job-publish">Create & Publish</button>
+        ${draft.id ? "" : `<button class="tool-btn" type="button" data-action="save-job-draft" ${ui.jobs.isSaving ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : "Save as Draft"}</button>`}
+        <button class="tool-btn jobs-publish-btn" type="button" data-action="create-job-publish" ${ui.jobs.isSaving ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : draft.id ? "Save Changes" : "Create & Publish"}</button>
       </div>
     </section>
   `;
@@ -3675,7 +3974,14 @@ function hydrateAiMatchPlacements(results) {
 }
 
 function renderPipelineSection() {
-  const candidates = filteredCandidates().filter((item) => (ui.pipelineFilter === "all" ? true : item.stage === ui.pipelineFilter));
+  const visibleCandidates = filteredCandidates();
+  const recruiterOptions = getPipelineRecruiterOptions(visibleCandidates);
+  const jobOptions = getPipelineJobOptions(visibleCandidates);
+  const candidates = visibleCandidates
+    .filter((item) => (ui.pipelineFilter === "all" ? true : item.stage === ui.pipelineFilter))
+    .filter((item) => (ui.pipelineRecruiterFilter === "all" ? true : getPipelineRecruiterKey(item) === ui.pipelineRecruiterFilter))
+    .filter((item) => (ui.pipelineJobFilter === "all" ? true : getPipelineJobFilterValue(item) === ui.pipelineJobFilter))
+    .sort(comparePipelineCandidates);
   const visibleStages = PIPELINE_STAGES;
   const canWrite = canCurrentUserWriteRecords();
 
@@ -3689,7 +3995,7 @@ function renderPipelineSection() {
             ? stageCandidates
                 .map((item) => {
                   const job = findById(state.jobs, item.jobId);
-                  const role = getCandidateCurrentRole(item) || job?.title || "Unassigned role";
+                  const role = job?.title || getCandidateCurrentRole(item) || "Unassigned role";
                   const skills = Array.isArray(item.skills) ? item.skills.slice(0, 3) : [];
                   return `
                   <article class="pipeline-item">
@@ -3701,7 +4007,7 @@ function renderPipelineSection() {
                         ? `<div class="pipeline-skill-row">${skills.map((skill) => `<span>${escapeHtml(skill)}</span>`).join("")}</div>`
                         : ""
                     }
-                    <p class="meta">Recruiter: ${escapeHtml(item.recruiter)}</p>
+                    <p class="meta">Recruiter: ${escapeHtml(getPipelineRecruiterName(item))}</p>
                     <select data-action="move-stage" data-candidate-id="${item.id}" ${canWrite ? "" : "disabled"}>
                       ${PIPELINE_STAGES.map((option) => `<option value="${option}" ${option === item.stage ? "selected" : ""}>${option}</option>`).join("")}
                     </select>
@@ -3719,11 +4025,39 @@ function renderPipelineSection() {
     <section class="panel">
       <h2 class="panel-title">Pipeline Board</h2>
       <div class="pipeline-toolbar">
-        <select data-action="pipeline-filter">
+        <label class="pipeline-filter-field">
+          <span>Stage</span>
+          <select data-action="pipeline-filter" aria-label="Filter pipeline by stage">
           <option value="all" ${ui.pipelineFilter === "all" ? "selected" : ""}>All stages</option>
           ${PIPELINE_STAGES.map((stage) => `<option value="${stage}" ${ui.pipelineFilter === stage ? "selected" : ""}>${stage}</option>`).join("")}
-        </select>
-        <button class="tool-btn" type="button" data-action="clear-pipeline-filter">Clear Filter</button>
+          </select>
+        </label>
+        <label class="pipeline-filter-field">
+          <span>Recruiter</span>
+          <select data-action="pipeline-recruiter-filter" aria-label="Filter pipeline by recruiter">
+            <option value="all" ${ui.pipelineRecruiterFilter === "all" ? "selected" : ""}>All recruiters</option>
+            ${recruiterOptions
+              .map(
+                (option) =>
+                  `<option value="${escapeHtml(option.value)}" ${ui.pipelineRecruiterFilter === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <label class="pipeline-filter-field">
+          <span>Job role</span>
+          <select data-action="pipeline-job-filter" aria-label="Filter pipeline by job role">
+            <option value="all" ${ui.pipelineJobFilter === "all" ? "selected" : ""}>All job roles</option>
+            ${jobOptions
+              .map(
+                (option) =>
+                  `<option value="${escapeHtml(option.value)}" ${ui.pipelineJobFilter === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <button class="tool-btn" type="button" data-action="clear-pipeline-filter">Clear filters</button>
+        <span class="pipeline-filter-count" aria-live="polite">Showing ${candidates.length} of ${visibleCandidates.length} candidates</span>
         <div class="pipeline-scroll-controls" aria-label="Pipeline horizontal navigation">
           <button class="tool-btn" type="button" data-action="pipeline-scroll" data-direction="left" aria-label="Scroll pipeline left">← Left</button>
           <span>Drag, swipe, Shift + wheel, or use arrow keys</span>
@@ -3733,6 +4067,54 @@ function renderPipelineSection() {
       <div class="pipeline-board" tabindex="0" role="region" aria-label="Pipeline stages. Scroll horizontally to view all stages.">${board}</div>
     </section>
   `;
+}
+
+function getPipelineRecruiterName(candidate) {
+  return String(candidate?.recruiter || "").trim() || "Unassigned";
+}
+
+function getPipelineRecruiterKey(candidate) {
+  return normalizePersonKey(getPipelineRecruiterName(candidate)) || "__unassigned__";
+}
+
+function getPipelineRecruiterOptions(candidates) {
+  const options = new Map();
+  candidates.forEach((candidate) => {
+    const value = getPipelineRecruiterKey(candidate);
+    if (!options.has(value)) options.set(value, getPipelineRecruiterName(candidate));
+  });
+  return [...options.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+}
+
+function getPipelineJobFilterValue(candidate) {
+  return String(candidate?.jobId || "").trim() || "__unassigned__";
+}
+
+function getPipelineJobRole(candidate) {
+  const jobId = getPipelineJobFilterValue(candidate);
+  if (jobId === "__unassigned__") return "Unassigned";
+  return findById(state.jobs, jobId)?.title || jobId;
+}
+
+function getPipelineJobOptions(candidates) {
+  const options = new Map();
+  candidates.forEach((candidate) => {
+    const value = getPipelineJobFilterValue(candidate);
+    if (!options.has(value)) options.set(value, getPipelineJobRole(candidate));
+  });
+  return [...options.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+}
+
+function comparePipelineCandidates(left, right) {
+  return (
+    getPipelineRecruiterName(left).localeCompare(getPipelineRecruiterName(right), undefined, { sensitivity: "base" }) ||
+    getPipelineJobRole(left).localeCompare(getPipelineJobRole(right), undefined, { sensitivity: "base" }) ||
+    String(left?.name || "").localeCompare(String(right?.name || ""), undefined, { sensitivity: "base" })
+  );
 }
 
 function renderInterviewsSection() {
@@ -7599,28 +7981,32 @@ function candidateHasReachedStage(candidate, targetStage) {
 }
 
 function normalizeJobStatus(value) {
-  const lower = String(value || "Open").trim().toLowerCase();
-  if (["active", "open", "published"].includes(lower)) return "Open";
-  if (["paused", "hold", "on hold"].includes(lower)) return "Paused";
-  if (["closed", "inactive", "filled"].includes(lower)) return "Closed";
-  if (["draft"].includes(lower)) return "Draft";
-  return "Open";
+  const lower = String(value || "DRAFT").trim().toLowerCase().replace(/-/g, "_");
+  if (["active", "open", "published"].includes(lower)) return "ACTIVE";
+  if (lower === "paused") return "PAUSED";
+  if (["hold", "on hold", "on_hold"].includes(lower)) return "ON_HOLD";
+  if (lower === "filled") return "FILLED";
+  if (["closed", "inactive"].includes(lower)) return "CLOSED";
+  if (["cancelled", "canceled"].includes(lower)) return "CANCELLED";
+  if (lower === "archived") return "ARCHIVED";
+  return "DRAFT";
 }
 
 function displayJobStatus(value) {
-  const normalized = normalizeJobStatus(value);
-  if (normalized === "Open") return "Active";
-  return normalized;
+  return normalizeJobStatus(value)
+    .toLowerCase()
+    .split("_")
+    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : "")
+    .join(" ");
 }
 
 function isJobStatusActive(value) {
-  return normalizeJobStatus(value) === "Open";
+  return normalizeJobStatus(value) === "ACTIVE";
 }
 
 function matchesJobStatusFilter(statusValue, filterValue) {
   if (filterValue === "all") return true;
   const normalized = normalizeJobStatus(statusValue).toLowerCase();
-  if (filterValue === "active") return normalized === "open";
   return normalized === filterValue;
 }
 
@@ -7634,7 +8020,18 @@ function createJobDraft(initial = {}) {
     title: String(source.title || ""),
     clientId: String(source.clientId || ""),
     locations: uniqueStringsLocal(locations),
-    workMode: String(source.workMode || "Hybrid"),
+    workMode: normalizeWorkModeLabel(source.workMode),
+    remoteScope: String(source.remoteScope || "India"),
+    country: String(source.country || "India"),
+    state: String(source.state || ""),
+    city: String(source.city || ""),
+    locationEntry: "",
+    primaryTimeZone: String(source.primaryTimeZone || "Asia/Kolkata"),
+    supportedTimeZones: uniqueStringsLocal(Array.isArray(source.supportedTimeZones) ? source.supportedTimeZones.map(String) : splitMultiDelimiter(source.supportedTimeZones || "")),
+    timeZoneEntry: "Asia/Kolkata",
+    workingHours: String(source.workingHours || ""),
+    minTimeZoneOverlap: source.minTimeZoneOverlap == null ? "" : String(source.minTimeZoneOverlap),
+    priority: String(source.priority || "NORMAL").toUpperCase(),
     jobType,
     openings: source.openings == null || source.openings === "" ? "1" : String(source.openings),
     expMin: source.expMin == null ? "" : String(source.expMin),
@@ -7649,6 +8046,30 @@ function createJobDraft(initial = {}) {
     requiredSkills: uniqueStringsLocal(Array.isArray(source.requiredSkills) ? source.requiredSkills.map(String) : splitComma(source.requiredSkills)),
     preferredSkills: uniqueStringsLocal(Array.isArray(source.preferredSkills) ? source.preferredSkills.map(String) : splitComma(source.preferredSkills))
   };
+}
+
+function normalizeWorkModeLabel(value) {
+  const normalized = String(value || "Hybrid").trim().toLowerCase();
+  if (normalized === "remote") return "Remote";
+  if (normalized === "onsite" || normalized === "on-site") return "Onsite";
+  return "Hybrid";
+}
+
+function addJobLocationFromInput() {
+  const input = document.getElementById("jobLocationEntry");
+  const location = String(input?.value || ui.jobs.draft.locationEntry || "").trim();
+  if (!location) return;
+  ui.jobs.draft.locations = uniqueStringsLocal([...(ui.jobs.draft.locations || []), location]);
+  ui.jobs.draft.locationEntry = "";
+  renderSection();
+}
+
+function addJobTimeZoneFromInput() {
+  const input = document.getElementById("jobSupportedTimeZoneEntry");
+  const timeZone = String(input?.value || ui.jobs.draft.timeZoneEntry || "").trim();
+  if (!timeZone) return;
+  ui.jobs.draft.supportedTimeZones = uniqueStringsLocal([...(ui.jobs.draft.supportedTimeZones || []), timeZone]);
+  renderSection();
 }
 
 function renderJobCommercialFields(draft) {
@@ -7847,7 +8268,8 @@ function extractPreferredSkillsFromJd(jdText, requiredSkills) {
   return preferredTerms.filter((item) => !requiredSet.has(String(item).toLowerCase()));
 }
 
-function submitJobDraft(targetStatus) {
+async function submitJobDraft(targetStatus) {
+  if (ui.jobs.isSaving) return;
   const draft = ui.jobs.draft;
   const title = String(draft.title || "").trim();
   const openings = Number(draft.openings || 1);
@@ -7861,11 +8283,9 @@ function submitJobDraft(targetStatus) {
     return;
   }
 
-  const normalizedStatus = normalizeJobStatus(targetStatus);
   const jobType = normalizeJobType(draft.jobType);
   const isFte = jobType === "FTE";
-  const normalizedDraft = {
-    id: draft.id || uid("job"),
+  const body = {
     title,
     jdText: String(draft.jdText || "").trim(),
     clientId,
@@ -7873,7 +8293,9 @@ function submitJobDraft(targetStatus) {
     location: uniqueStringsLocal(draft.locations || []).join(", "),
     workMode: String(draft.workMode || "Hybrid"),
     jobType,
-    status: normalizedStatus,
+    status: draft.id
+      ? normalizeJobStatus(findById(state.jobs, draft.id)?.status)
+      : normalizeJobStatus(targetStatus),
     openings: Number.isFinite(openings) && openings > 0 ? openings : 1,
     expMin: draft.expMin === "" ? "" : Number(draft.expMin),
     expMax: draft.expMax === "" ? "" : Number(draft.expMax),
@@ -7886,23 +8308,186 @@ function submitJobDraft(targetStatus) {
     ctcNotDisclosed: Boolean(draft.ctcNotDisclosed),
     requiredSkills: uniqueStringsLocal(draft.requiredSkills || []),
     preferredSkills: uniqueStringsLocal(draft.preferredSkills || []),
-    createdAt: todayISO(),
-    updatedAt: new Date().toISOString()
+    remoteScope: String(draft.remoteScope || ""),
+    country: String(draft.country || ""),
+    state: String(draft.state || ""),
+    city: String(draft.city || ""),
+    primaryTimeZone: String(draft.primaryTimeZone || ""),
+    supportedTimeZones: uniqueStringsLocal(draft.supportedTimeZones || []),
+    workingHours: String(draft.workingHours || ""),
+    minTimeZoneOverlap: draft.minTimeZoneOverlap === "" ? null : Number(draft.minTimeZoneOverlap),
+    priority: String(draft.priority || "NORMAL")
   };
 
-  const index = state.jobs.findIndex((item) => item.id === normalizedDraft.id);
-  if (index >= 0) {
-    normalizedDraft.createdAt = state.jobs[index].createdAt || todayISO();
-    state.jobs[index] = normalizedDraft;
-    recordActivity("job", `Job updated: ${normalizedDraft.title} (${displayJobStatus(normalizedDraft.status)})`);
-  } else {
-    state.jobs.push(normalizedDraft);
-    recordActivity("job", `Job created: ${normalizedDraft.title} (${displayJobStatus(normalizedDraft.status)})`);
+  ui.jobs.isSaving = true;
+  renderSection();
+  try {
+    const editing = Boolean(draft.id);
+    const payload = await jobsApiRequest(editing ? API_ROUTES.job(draft.id) : API_ROUTES.jobs, {
+      method: editing ? "PATCH" : "POST",
+      body
+    });
+    const job = payload?.data?.job;
+    if (!job) throw new Error("The Jobs API did not return the saved job.");
+    replaceJobInState(job);
+    recordActivity("job", `Job ${editing ? "updated" : "created"}: ${job.title} (${displayJobStatus(job.status)})`);
+    ui.jobs.mode = "list";
+    ui.jobs.draft = createJobDraft();
+    invalidateJobInsights();
+    saveState(state);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to save the job.");
+  } finally {
+    ui.jobs.isSaving = false;
+    renderSection();
   }
+}
 
-  ui.jobs.mode = "list";
-  ui.jobs.draft = createJobDraft();
-  saveAndRender();
+async function jobsApiRequest(path, options = {}) {
+  const response = await fetch(buildApiUrl(path), {
+    method: options.method || "GET",
+    headers: getAuthHeaders({
+      Accept: "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {})
+    }),
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.success) {
+    throw new Error(payload?.error?.message || `Jobs request failed with HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+function replaceJobInState(job) {
+  const index = state.jobs.findIndex((item) => String(item.id) === String(job.id));
+  if (index >= 0) state.jobs[index] = job;
+  else state.jobs.unshift(job);
+}
+
+function invalidateJobInsights() {
+  ui.jobs.insights = null;
+  ui.jobs.insightsError = "";
+}
+
+async function loadJobInsights() {
+  if (ui.jobs.insightsLoading || Array.isArray(ui.jobs.insights)) return;
+  ui.jobs.insightsLoading = true;
+  ui.jobs.insightsError = "";
+  renderSection();
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.jobInsights);
+    ui.jobs.insights = Array.isArray(payload?.data?.insights) ? payload.data.insights : [];
+  } catch (error) {
+    ui.jobs.insightsError = error instanceof Error ? error.message : "Unable to load demand insights.";
+  } finally {
+    ui.jobs.insightsLoading = false;
+    renderSection();
+  }
+}
+
+async function changeJobStatusViaApi(jobId, status) {
+  const job = findById(state.jobs, jobId);
+  if (!job || normalizeJobStatus(job.status) === normalizeJobStatus(status)) return;
+  const needsReason = ["PAUSED", "ON_HOLD", "CLOSED", "CANCELLED", "ARCHIVED"].includes(normalizeJobStatus(status));
+  const reason = needsReason ? prompt(`Reason for changing this job to ${displayJobStatus(status)}:`) : "";
+  if (needsReason && (!reason || !reason.trim())) {
+    renderSection();
+    return;
+  }
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.jobStatus(jobId), { method: "POST", body: { status, reason } });
+    replaceJobInState(payload.data.job);
+    invalidateJobInsights();
+    saveState(state);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to change job status.");
+    renderSection();
+  }
+}
+
+async function archiveJobViaApi(jobId) {
+  const job = findById(state.jobs, jobId);
+  if (!job) return;
+  const reason = prompt(`Why are you archiving “${job.title}”?`);
+  if (!reason || !reason.trim()) return;
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.jobArchive(jobId), { method: "POST", body: { reason } });
+    replaceJobInState(payload.data.job);
+    invalidateJobInsights();
+    saveState(state);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to archive the job.");
+  }
+}
+
+async function duplicateJobViaApi(jobId) {
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.jobDuplicate(jobId), { method: "POST", body: {} });
+    replaceJobInState(payload.data.job);
+    ui.jobs.draft = createJobDraft(payload.data.job);
+    ui.jobs.mode = "create";
+    invalidateJobInsights();
+    saveState(state);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to duplicate the job.");
+  }
+}
+
+async function permanentlyDeleteJobViaApi(jobId) {
+  const job = findById(state.jobs, jobId);
+  if (!job) return;
+  const confirmation = prompt(`Permanent deletion is only allowed when no candidates, submissions, or interviews are linked. Type the exact job title to continue:\n\n${job.title}`);
+  if (confirmation === null) return;
+  try {
+    await jobsApiRequest(API_ROUTES.job(jobId), { method: "DELETE", body: { confirmation } });
+    state.jobs = state.jobs.filter((item) => String(item.id) !== String(jobId));
+    invalidateJobInsights();
+    saveState(state);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to delete the job.");
+  }
+}
+
+async function createCandidatePoolFromJob(jobId) {
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.jobCandidatePool(jobId), { method: "POST", body: {} });
+    const pool = payload.data.pool;
+    alert(`Candidate pool “${pool.name}” created with ${pool.memberCount} matching candidate(s). Existing candidate records were not moved or changed.`);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to create the candidate pool.");
+  }
+}
+
+async function createCandidatePoolFromInsight(key) {
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.insightCandidatePool, { method: "POST", body: { key } });
+    const pool = payload.data.pool;
+    alert(`Proactive pool “${pool.name}” created with ${pool.memberCount} matching candidate(s).`);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to create the candidate pool.");
+  }
+}
+
+async function loadJobAudit(jobId) {
+  ui.jobs.auditJobId = jobId;
+  ui.jobs.auditEntries = [];
+  ui.jobs.auditLoading = true;
+  renderSection();
+  try {
+    const payload = await jobsApiRequest(API_ROUTES.job(jobId));
+    ui.jobs.auditEntries = Array.isArray(payload?.data?.audit) ? payload.data.audit : [];
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Unable to load job history.");
+    ui.jobs.auditJobId = "";
+  } finally {
+    ui.jobs.auditLoading = false;
+    renderSection();
+  }
 }
 
 async function handleBulkUploadFiles(fileList) {
@@ -10237,14 +10822,27 @@ function normalizeJobs(items) {
 
       return {
         id: String(item.id),
+        referenceNo: String(item.referenceNo || ""),
         title: String(item.title),
         jdText: String(item.jdText || item.description || ""),
         clientId: String(item.clientId || ""),
         locations,
         location: locations.join(", "),
-        workMode: String(item.workMode || "Hybrid"),
+        workMode: normalizeWorkModeLabel(item.workMode),
+        remoteScope: String(item.remoteScope || ""),
+        country: String(item.country || ""),
+        state: String(item.state || ""),
+        city: String(item.city || ""),
+        primaryTimeZone: String(item.primaryTimeZone || ""),
+        supportedTimeZones: uniqueStringsLocal(Array.isArray(item.supportedTimeZones) ? item.supportedTimeZones.map(String) : splitMultiDelimiter(item.supportedTimeZones || "")),
+        workingHours: String(item.workingHours || ""),
+        minTimeZoneOverlap: item.minTimeZoneOverlap == null || item.minTimeZoneOverlap === "" ? "" : Number(item.minTimeZoneOverlap),
         jobType: normalizeJobType(item.jobType),
         status: normalizeJobStatus(item.status),
+        statusReason: String(item.statusReason || ""),
+        priority: String(item.priority || "NORMAL").toUpperCase(),
+        ownerUserId: String(item.ownerUserId || ""),
+        assignedRecruiterId: String(item.assignedRecruiterId || ""),
         openings: Number(item.openings || 1),
         expMin: item.expMin == null || item.expMin === "" ? "" : Number(item.expMin),
         expMax: item.expMax == null || item.expMax === "" ? "" : Number(item.expMax),
@@ -10257,6 +10855,10 @@ function normalizeJobs(items) {
         ctcNotDisclosed: Boolean(item.ctcNotDisclosed),
         requiredSkills: uniqueStringsLocal(requiredSkills),
         preferredSkills: uniqueStringsLocal(preferredSkills),
+        openedAt: String(item.openedAt || ""),
+        targetClosureAt: String(item.targetClosureAt || ""),
+        closedAt: String(item.closedAt || ""),
+        archivedAt: String(item.archivedAt || ""),
         createdAt: String(item.createdAt || todayISO()),
         updatedAt: String(item.updatedAt || "")
       };

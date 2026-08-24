@@ -6,6 +6,7 @@ import { appStateStoreService } from "../services/app-state-store.service";
 import { isFounderRole, type AuthUser } from "../services/auth.service";
 import { authorizationService } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
+import { jobService } from "../services/job.service";
 import type { CandidateRecord } from "../types/candidate";
 import { AppStateStorePayload } from "../types/app-state";
 
@@ -36,7 +37,10 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
     bulkUpload: requestedBulkUpload,
     users: toOptionalRowArray(body.users),
     clients: toOptionalRowArray(body.clients),
-    jobs: toOptionalRowArray(body.jobs),
+    // Jobs are intentionally excluded from generic browser-state sync. The
+    // authenticated Jobs API owns job mutations and prevents stale snapshots
+    // from overwriting newer status or audit history.
+    jobs: undefined,
     interviews: toOptionalRowArray(body.interviews),
     placements: toOptionalRowArray(body.placements),
     activities: toOptionalRowArray(body.activities)
@@ -78,6 +82,7 @@ const buildBootstrapSnapshot = async (authUser: AuthUser) => {
   const snapshot = await appStateStoreService.getSnapshot(candidates, {
     bulkUploadOwnerId: founder ? undefined : authUser.id
   });
+  snapshot.jobs = await jobService.listAllForBootstrap();
   const data = authorizationService.scopeAppState(context, snapshot);
 
   if (!founder) {
