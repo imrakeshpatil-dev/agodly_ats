@@ -9,11 +9,19 @@ Store the key only in the production host's encrypted server environment:
 ```dotenv
 AI_PROVIDER=openai
 OPENAI_API_KEY=replace-in-host-secret-manager
+# Legacy single-model setting retained for rollback compatibility.
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BULK_MODEL=gpt-5.6-luna
+OPENAI_STANDARD_MODEL=gpt-5.4-mini
+OPENAI_COMPLEX_MODEL=gpt-5.6-terra
 AI_REQUEST_TIMEOUT_MS=30000
 AI_MAX_RETRIES=1
 AI_MAX_OUTPUT_TOKENS=2000
 ```
+
+The server routes bulk CV extraction and basic classification to Luna, routine matching and recruiter assistance to Mini, and candidate comparisons, hiring-demand analysis, forecasts, and other difficult prompts to Terra. OpenAI GPT-5 requests use `max_completion_tokens` and an explicit reasoning effort (`low` for bulk/standard, `medium` for complex).
+
+Before changing production, verify that the production OpenAI project can list and call all three model IDs. A missing model must block deployment rather than silently changing the workload assignment.
 
 ## OpenRouter
 

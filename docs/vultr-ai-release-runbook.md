@@ -19,12 +19,18 @@ The server-side `/home/rakeshpatil1/htdocs/admin.agodly.com/.env` must contain:
 ```dotenv
 AI_PROVIDER=openai
 OPENAI_API_KEY=<production project key>
+# Legacy single-model setting retained for rollback compatibility.
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BULK_MODEL=gpt-5.6-luna
+OPENAI_STANDARD_MODEL=gpt-5.4-mini
+OPENAI_COMPLEX_MODEL=gpt-5.6-terra
 AI_REQUEST_TIMEOUT_MS=30000
 AI_MAX_RETRIES=1
 AI_MAX_OUTPUT_TOKENS=2000
 AI_RESUME_MAX_CHARS=18000
 ```
+
+Before deployment, use the production project key to confirm access to `gpt-5.6-luna`, `gpt-5.4-mini`, and `gpt-5.6-terra`. Do not deploy this routing change if any model returns `model_not_found`; keep the current release active until the OpenAI project is granted access.
 
 Keep `.env` mode `0600`. Never echo it, download it to a browser, commit it, or expose any of these values through a `NEXT_PUBLIC_*` variable.
 

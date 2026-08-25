@@ -29,6 +29,12 @@ services:
         value: openai
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
+      - key: OPENAI_BULK_MODEL
+        value: gpt-5.6-luna
+      - key: OPENAI_STANDARD_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_COMPLEX_MODEL
+        value: gpt-5.6-terra
       - key: AI_REQUEST_TIMEOUT_MS
         value: 30000
       - key: AI_MAX_RETRIES

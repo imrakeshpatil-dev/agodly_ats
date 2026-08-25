@@ -159,7 +159,7 @@ jobs:
             cd ~/htdocs/admin.agodly.com
             chmod 600 .env
             test -n "${DEPLOY_OPENAI_API_KEY:-}"
-            node -e 'const fs=require("fs"),p=".env",t=p+".release.tmp",u={AI_PROVIDER:"openai",OPENAI_API_KEY:process.env.DEPLOY_OPENAI_API_KEY,OPENAI_MODEL:"gpt-4.1-mini",AI_REQUEST_TIMEOUT_MS:"30000",AI_MAX_RETRIES:"1",AI_MAX_OUTPUT_TOKENS:"2000",AI_RESUME_MAX_CHARS:"18000"},keys=new Set(Object.keys(u)),lines=fs.readFileSync(p,"utf8").split(/\r?\n/).filter(line=>!keys.has(line.split("=",1)[0]));fs.writeFileSync(t,lines.filter(Boolean).concat(Object.entries(u).map(([k,v])=>k+"="+v),"").join("\n"),{mode:0o600});fs.renameSync(t,p)'
+            node -e 'const fs=require("fs"),p=".env",t=p+".release.tmp",u={AI_PROVIDER:"openai",OPENAI_API_KEY:process.env.DEPLOY_OPENAI_API_KEY,OPENAI_MODEL:"gpt-4.1-mini",OPENAI_BULK_MODEL:"gpt-5.6-luna",OPENAI_STANDARD_MODEL:"gpt-5.4-mini",OPENAI_COMPLEX_MODEL:"gpt-5.6-terra",AI_REQUEST_TIMEOUT_MS:"30000",AI_MAX_RETRIES:"1",AI_MAX_OUTPUT_TOKENS:"2000",AI_RESUME_MAX_CHARS:"18000"},keys=new Set(Object.keys(u)),lines=fs.readFileSync(p,"utf8").split(/\r?\n/).filter(line=>!keys.has(line.split("=",1)[0]));fs.writeFileSync(t,lines.filter(Boolean).concat(Object.entries(u).map(([k,v])=>k+"="+v),"").join("\n"),{mode:0o600});fs.renameSync(t,p)'
             unset DEPLOY_OPENAI_API_KEY
             echo ">> Pulling approved main commit..."
             git fetch origin main

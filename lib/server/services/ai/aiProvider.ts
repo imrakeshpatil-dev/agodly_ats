@@ -1,4 +1,5 @@
 export type AIProviderName = "ollama" | "openai" | "openrouter" | "disabled";
+export type AIWorkloadTier = "bulk" | "standard" | "complex";
 export type AIErrorCategory =
   | "disabled"
   | "not_configured"

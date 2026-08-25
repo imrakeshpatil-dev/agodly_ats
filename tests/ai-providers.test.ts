@@ -128,6 +128,30 @@ test("invalid JSON is repaired once and validated", async () => {
   assert.equal(calls, 2);
 });
 
+test("OpenAI GPT-5 family requests use reasoning-compatible Chat Completions parameters", async () => {
+  let requestBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+    return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+  };
+
+  const provider = createAIProvider({
+    ...config("openai"),
+    model: "gpt-5.4-mini",
+    reasoningEffort: "low"
+  });
+  await provider.chat([{ role: "user", content: "hello" }], {
+    temperature: 0.4,
+    maxOutputTokens: 320
+  });
+
+  assert.equal(requestBody.model, "gpt-5.4-mini");
+  assert.equal(requestBody.max_completion_tokens, 320);
+  assert.equal(requestBody.reasoning_effort, "low");
+  assert.equal("max_tokens" in requestBody, false);
+  assert.equal("temperature" in requestBody, false);
+});
+
 test("resume extraction includes extended evidence fields and safe metadata", async () => {
   const provider = createAIProvider(config("openai"));
   globalThis.fetch = async () => jsonResponse({ choices: [{ message: { content: JSON.stringify({

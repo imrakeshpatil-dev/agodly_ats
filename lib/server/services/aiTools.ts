@@ -492,7 +492,7 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
   }));
 
   try {
-    const provider = getAIProvider();
+    const provider = getAIProvider("standard");
     const parsed = await provider.generateStructuredData<{ scores: Array<Record<string, unknown>> }>({
       temperature: 0.1,
       messages: [
@@ -730,7 +730,7 @@ export const matchCandidatesToJob = async (
   return {
     explanation: ranked.length
       ? usedAI
-        ? `Ranked ${ranked.length} candidate(s) using ${getAIProvider().getProviderName()}-assisted match scoring with ATS evidence.`
+        ? `Ranked ${ranked.length} candidate(s) using ${getAIProvider("standard").getProviderName()}-assisted match scoring with ATS evidence.`
         : `Ranked ${ranked.length} candidate(s) against the JD with term/skill/experience confidence scoring.`
       : "No suitable candidates found for the provided job description or keywords.",
     results: ranked
@@ -806,7 +806,7 @@ export const generateInterviewQuestions = async (skill: string): Promise<AIToolR
   }
 
   try {
-      const parsed = await getAIProvider().generateStructuredData<{ questions: string[] }>({
+      const parsed = await getAIProvider("standard").generateStructuredData<{ questions: string[] }>({
         temperature: 0.4,
         messages: [
           {
@@ -853,7 +853,7 @@ export const draftRecruiterMessage = async (candidateName: string, role: string)
   const cleanRole = String(role || "").trim() || "the role";
 
   try {
-      const parsed = await getAIProvider().generateStructuredData<{ subject: string; message: string }>({
+      const parsed = await getAIProvider("standard").generateStructuredData<{ subject: string; message: string }>({
         temperature: 0.5,
         messages: [
           {

@@ -11,7 +11,7 @@ test("MY LLM and AI Match use the configured provider abstraction", async () => 
     read("lib/server/services/aiAgentService.ts"),
     read("lib/server/services/aiTools.ts")
   ]);
-  assert.match(agent, /getAIProvider\(\)/);
+  assert.match(agent, /getAIProvider\(selectAIWorkloadTier\(cleanPrompt\)\)/);
   assert.match(agent, /AI assistant is temporarily unavailable\. Core ATS functions continue to work normally\./);
   assert.match(tools, /rerankWithConfiguredProviderForJobMatch/);
   assert.match(tools, /heuristicRanked/);
