@@ -1,10 +1,10 @@
-import { AIProvider } from "./aiProvider";
+import { AIProvider, AIWorkloadTier } from "./aiProvider";
 import { AIProviderConfig, getAIProviderConfig } from "./aiConfig";
 import { DisabledProvider } from "./providers/disabledProvider";
 import { OllamaProvider } from "./providers/ollamaProvider";
 import { OpenAICompatibleProvider } from "./providers/openAICompatibleProvider";
 
-let providerInstance: AIProvider | null = null;
+const providerInstances = new Map<AIWorkloadTier, AIProvider>();
 
 export const createAIProvider = (config: AIProviderConfig): AIProvider => {
   if (config.provider === "ollama") return new OllamaProvider(config);
@@ -14,11 +14,14 @@ export const createAIProvider = (config: AIProviderConfig): AIProvider => {
   return new DisabledProvider(config);
 };
 
-export const getAIProvider = (): AIProvider => {
-  if (!providerInstance) providerInstance = createAIProvider(getAIProviderConfig());
-  return providerInstance;
+export const getAIProvider = (workload: AIWorkloadTier = "standard"): AIProvider => {
+  const existing = providerInstances.get(workload);
+  if (existing) return existing;
+  const provider = createAIProvider(getAIProviderConfig(workload));
+  providerInstances.set(workload, provider);
+  return provider;
 };
 
 export const resetAIProviderForTests = (): void => {
-  providerInstance = null;
+  providerInstances.clear();
 };

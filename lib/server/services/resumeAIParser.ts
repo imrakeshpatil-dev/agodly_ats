@@ -69,7 +69,7 @@ Rules:
 
 export const parseResumeWithAIResult = async (
   resumeText: string,
-  provider: AIProvider = getAIProvider(),
+  provider: AIProvider = getAIProvider("bulk"),
   useCache = true
 ): Promise<ResumeAIParseResult> => {
   const trimmedText = String(resumeText || "").trim();

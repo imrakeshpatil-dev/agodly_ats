@@ -2,6 +2,7 @@ import { AppError } from "../middleware/error.middleware";
 import { aiMemoryService } from "./aiMemory.service";
 import { AIMessage, AIToolDefinition } from "./ai/aiProvider";
 import { getAIProvider } from "./ai/aiProviderFactory";
+import { selectAIWorkloadTier } from "./ai/aiWorkloadRouter";
 import type { AuthorizationContext } from "./authorization.service";
 import {
   AIToolResponse,
@@ -329,7 +330,7 @@ export const handleUserPrompt = async (
   messages.push({ role: "user", content: cleanPrompt });
 
   try {
-    const provider = getAIProvider();
+    const provider = getAIProvider(selectAIWorkloadTier(cleanPrompt));
     const first = await provider.chat(messages, { temperature: 0.1, tools: PROVIDER_TOOLS });
     const toolCalls = first.toolCalls;
     if (!toolCalls.length) {

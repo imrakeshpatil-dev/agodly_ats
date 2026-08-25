@@ -12,6 +12,12 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
       throw new AIProviderError("not_configured", `${this.config.provider} API key is not configured`, 503);
     }
 
+    const maxOutputTokens = Math.min(
+      options.maxOutputTokens ?? this.config.maxOutputTokens,
+      this.config.maxOutputTokens
+    );
+    const usesOpenAIReasoningParameters =
+      this.config.provider === "openai" && /^gpt-5(?:[.\-]|$)/i.test(this.config.model);
     const payload = await this.requestJson(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
@@ -23,8 +29,15 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
       },
       body: JSON.stringify({
         model: this.config.model,
-        temperature: options.temperature ?? 0.1,
-        max_tokens: Math.min(options.maxOutputTokens ?? this.config.maxOutputTokens, this.config.maxOutputTokens),
+        ...(usesOpenAIReasoningParameters
+          ? {
+              max_completion_tokens: maxOutputTokens,
+              reasoning_effort: this.config.reasoningEffort ?? "low"
+            }
+          : {
+              temperature: options.temperature ?? 0.1,
+              max_tokens: maxOutputTokens
+            }),
         ...(options.jsonMode ? { response_format: { type: "json_object" } } : {}),
         ...(options.tools?.length
           ? {
