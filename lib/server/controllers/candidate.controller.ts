@@ -11,6 +11,11 @@ import { candidateStoreService } from "../services/candidate-store.service";
 import { candidateResumeService } from "../services/candidate-resume.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
 import {
+  addFounderReviewRequest,
+  completeFounderReview,
+  isFounderReviewStage
+} from "../services/founder-review.service";
+import {
   classifyResumeAIError,
   parseResumeWithAIResult,
   ResumeAIParseResult
@@ -332,11 +337,64 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
     });
   }
 
+  if (
+    patch.stage !== undefined &&
+    patch.stage !== existingCandidate.stage &&
+    isFounderReviewStage(patch.stage) &&
+    authUser
+  ) {
+    patch.parsedData = addFounderReviewRequest(patch.parsedData ?? existingCandidate.parsedData, {
+      candidateId: existingCandidate.id,
+      stage: patch.stage,
+      previousStage: existingCandidate.stage,
+      actor: authUser
+    });
+  }
+
   const candidate = await candidateStoreService.updateCandidateProfile(candidateId, patch);
 
   res.status(200).json({
     success: true,
     candidate
+  });
+};
+
+export const submitFounderCandidateReview = async (req: Request, res: Response): Promise<void> => {
+  const candidateId = String(req.params.id || "").trim();
+  const reviewId = String(req.body?.reviewId || "").trim();
+  const rating = Number(req.body?.rating);
+  const notes = String(req.body?.notes || "").trim();
+  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
+
+  if (!candidateId || !reviewId) throw new AppError("Candidate id and review id are required", 400);
+  if (!authUser) throw new AppError("Unauthorized", 401);
+  if (authUser.role !== "CEO" && authUser.role !== "Managing Director") {
+    throw new AppError("Only the CEO or Managing Director can rate submitted candidates", 403);
+  }
+  if (!Number.isFinite(rating) || rating < 1 || rating > 10) {
+    throw new AppError("Candidate rating must be between 1 and 10", 400);
+  }
+
+  const context = await authorizationService.createContext(authUser);
+  const candidate = await getCandidateOrDeny(req, context, candidateId, "candidate-founder-review");
+  const completed = completeFounderReview(candidate.parsedData, {
+    reviewId,
+    rating,
+    notes,
+    actor: authUser
+  });
+  if (!completed.review) {
+    throw new AppError("Pending founder review was not found or was already completed", 409);
+  }
+
+  const updated = await candidateStoreService.updateCandidateProfile(candidate.id, {
+    parsedData: completed.parsedData
+  });
+
+  res.status(200).json({
+    success: true,
+    candidate: updated,
+    review: completed.review
   });
 };
 

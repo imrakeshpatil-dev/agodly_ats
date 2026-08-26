@@ -470,6 +470,186 @@ select {
   min-width: 250px;
 }
 
+.notification-center {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.notification-bell {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #101f34;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1.05rem;
+}
+
+.notification-bell:hover,
+.notification-bell.has-alerts {
+  border-color: rgba(244, 201, 106, 0.75);
+  background: #18253a;
+}
+
+.notification-bell strong {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #122238;
+  border-radius: 999px;
+  background: var(--red);
+  color: white;
+  padding: 0 4px;
+  font-size: 0.64rem;
+  line-height: 1;
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 0.65rem);
+  right: 0;
+  z-index: 40;
+  width: min(430px, calc(100vw - 2rem));
+  border: 1px solid #385374;
+  border-radius: 16px;
+  background: #0c192b;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.46);
+  padding: 0.85rem;
+}
+
+.notification-panel-head,
+.notification-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.notification-panel-head h2 {
+  margin: 0;
+  font-family: "Outfit", sans-serif;
+  font-size: 1.3rem;
+}
+
+.notification-summary {
+  margin: 0.5rem 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.notification-list {
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  display: grid;
+  gap: 0.65rem;
+  padding-right: 0.18rem;
+  overscroll-behavior: contain;
+}
+
+.notification-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 13px;
+  background: #102138;
+  padding: 0.72rem;
+}
+
+.notification-card-head > div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.notification-card-head strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.notification-card-head span,
+.notification-card > p {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.notification-card > p {
+  margin: 0.48rem 0 0.35rem;
+}
+
+.notification-stage {
+  flex: 0 0 auto;
+  border: 1px solid rgba(95, 174, 255, 0.38);
+  border-radius: 999px;
+  background: rgba(56, 155, 255, 0.12);
+  color: #a9d3ff !important;
+  padding: 0.2rem 0.42rem;
+  font-weight: 800;
+}
+
+.notification-link {
+  border: 0;
+  background: transparent;
+  color: #78bdff;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.notification-rating-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line-soft);
+}
+
+.notification-rating-grid label {
+  display: grid;
+  gap: 0.28rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.notification-rating-grid select,
+.notification-rating-grid textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0b182a;
+  color: var(--text);
+  padding: 0.48rem 0.56rem;
+  resize: vertical;
+}
+
+.notification-awaiting {
+  border-left: 3px solid var(--accent-warm);
+  background: rgba(244, 201, 106, 0.08);
+  padding: 0.48rem 0.55rem;
+  color: #ead7a8 !important;
+}
+
+.notification-empty {
+  display: grid;
+  gap: 0.28rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.notification-empty strong {
+  color: var(--green);
+}
+
 .tool-btn {
   border: 1px solid var(--line);
   background: linear-gradient(180deg, #12233a 0%, #102033 100%);

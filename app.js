@@ -45,6 +45,7 @@ const API_ROUTES = {
   jobArchive: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/archive`,
   jobDuplicate: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/duplicate`,
   jobCandidatePool: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/candidate-pool`,
+  founderReview: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/founder-review`,
   jobInsights: "/api/jobs/insights",
   insightCandidatePool: "/api/jobs/insights/candidate-pool"
 };
@@ -444,6 +445,11 @@ const ui = {
     editDraft: null,
     resetPassword: ""
   },
+  notifications: {
+    open: false,
+    submittingReviewId: "",
+    drafts: {}
+  },
   bootstrapLoaded: false,
   bootstrapError: "",
   backendSyncInFlight: false,
@@ -479,6 +485,7 @@ function refreshElementRefs() {
     searchInput: document.getElementById("searchInput"),
     periodFilter: document.getElementById("periodFilter"),
     newRecordBtn: document.getElementById("newRecordBtn"),
+    notificationCenter: document.getElementById("notificationCenter"),
 
     apiDot: document.getElementById("apiDot"),
     apiStatus: document.getElementById("apiStatus"),
@@ -679,6 +686,9 @@ function bindEvents() {
   });
 
   el.newRecordBtn?.addEventListener("click", openCreateDialog);
+  el.notificationCenter?.addEventListener("click", onNotificationClick);
+  el.notificationCenter?.addEventListener("input", onNotificationInput);
+  el.notificationCenter?.addEventListener("change", onNotificationInput);
   el.logoutBtn?.addEventListener("click", logoutCurrentUser);
   el.changePasswordBtn?.addEventListener("click", () => {
     openCurrentUserPasswordPanel();
@@ -1792,15 +1802,254 @@ function onSectionDrop(event) {
   handleBulkUploadFiles(event.dataTransfer?.files);
 }
 
-function render() {
+function render(options = {}) {
+  const scrollSnapshot = options.preserveScroll ? captureWorkspaceScrollState() : null;
   enforceActiveSectionAccess();
   renderNav();
   renderToolbar();
   renderSection();
+  renderNotificationCenter();
   renderApiStatus();
   renderCurrentUserCard();
   renderLoginState();
   el.usageCandidates.textContent = String(getVisibleCandidateCount());
+  if (scrollSnapshot) {
+    window.requestAnimationFrame(() => restoreWorkspaceScrollState(scrollSnapshot));
+  }
+}
+
+function captureWorkspaceScrollState() {
+  const selectors = [".table-wrap", ".candidate-side-panel", ".pipeline-board", ".pipeline-col", "[data-scroll-preserve]"];
+  const nested = selectors.flatMap((selector) =>
+    Array.from(document.querySelectorAll(selector)).map((node, index) => ({
+      selector,
+      index,
+      top: node.scrollTop,
+      left: node.scrollLeft
+    }))
+  );
+
+  return { windowX: window.scrollX, windowY: window.scrollY, nested };
+}
+
+function restoreWorkspaceScrollState(snapshot) {
+  if (!snapshot) return;
+  window.scrollTo({ left: snapshot.windowX, top: snapshot.windowY, behavior: "instant" });
+  snapshot.nested.forEach((position) => {
+    const node = document.querySelectorAll(position.selector)?.[position.index];
+    if (!node) return;
+    node.scrollLeft = position.left;
+    node.scrollTop = position.top;
+  });
+}
+
+function renderNotificationCenter() {
+  if (!el.notificationCenter) return;
+  if (!isAuthenticated()) {
+    el.notificationCenter.innerHTML = "";
+    return;
+  }
+
+  const notifications = getPendingFounderReviewNotifications();
+  const canRate = canCurrentUserSubmitFounderReview();
+  const isOpen = Boolean(ui.notifications.open);
+
+  el.notificationCenter.classList.toggle("is-open", isOpen);
+  el.notificationCenter.innerHTML = `
+    <button
+      class="notification-bell ${notifications.length ? "has-alerts" : ""}"
+      type="button"
+      data-notification-action="toggle"
+      aria-label="${notifications.length ? `${notifications.length} candidate ratings pending` : "No candidate ratings pending"}"
+      aria-expanded="${isOpen ? "true" : "false"}"
+    >
+      <span aria-hidden="true">🔔</span>
+      ${notifications.length ? `<strong>${notifications.length > 99 ? "99+" : notifications.length}</strong>` : ""}
+    </button>
+    ${
+      isOpen
+        ? `<section class="notification-panel" role="dialog" aria-label="Founder candidate rating actions">
+            <header class="notification-panel-head">
+              <div>
+                <p class="jobs-eyebrow">Action centre</p>
+                <h2>Candidate ratings</h2>
+              </div>
+              <button class="ghost-icon" type="button" data-notification-action="close" aria-label="Close notifications">×</button>
+            </header>
+            <p class="notification-summary">${notifications.length} candidate${notifications.length === 1 ? " requires" : "s require"} CEO/MD review.</p>
+            <div class="notification-list" data-scroll-preserve>
+              ${
+                notifications.length
+                  ? notifications.map((item) => renderFounderReviewNotification(item, canRate)).join("")
+                  : `<div class="notification-empty"><strong>All caught up</strong><span>No submitted candidate is waiting for a founder rating.</span></div>`
+              }
+            </div>
+          </section>`
+        : ""
+    }
+  `;
+}
+
+function renderFounderReviewNotification(item, canRate) {
+  const draft = ui.notifications.drafts[item.review.id] || { rating: "", notes: "" };
+  const job = findById(state.jobs, item.candidate.jobId);
+  const isSubmitting = ui.notifications.submittingReviewId === item.review.id;
+
+  return `
+    <article class="notification-card">
+      <div class="notification-card-head">
+        <div>
+          <strong>${escapeHtml(item.candidate.name || "Candidate")}</strong>
+          <span>${escapeHtml(job?.title || item.candidate.currentRole || "Unassigned role")}</span>
+        </div>
+        <span class="notification-stage">${escapeHtml(item.review.stage)}</span>
+      </div>
+      <p>Moved by ${escapeHtml(item.review.requestedBy?.name || item.candidate.recruiter || "Recruiter")} · ${escapeHtml(formatShortDate(item.review.requestedAt))}</p>
+      <button class="notification-link" type="button" data-notification-action="open-candidate" data-candidate-id="${escapeHtml(item.candidate.id)}">View candidate profile</button>
+      ${
+        canRate
+          ? `<div class="notification-rating-grid">
+              <label>
+                <span>CEO/MD rating *</span>
+                <select data-notification-field="rating" data-review-id="${escapeHtml(item.review.id)}">
+                  <option value="">Select 1–10</option>
+                  ${Array.from({ length: 10 }, (_, index) => index + 1)
+                    .map((rating) => `<option value="${rating}" ${String(draft.rating) === String(rating) ? "selected" : ""}>${rating}/10</option>`)
+                    .join("")}
+                </select>
+              </label>
+              <label>
+                <span>Review note</span>
+                <textarea rows="2" maxlength="500" data-notification-field="notes" data-review-id="${escapeHtml(item.review.id)}" placeholder="Strengths, risks, or next action">${escapeHtml(draft.notes || "")}</textarea>
+              </label>
+              <button class="tool-btn primary" type="button" data-notification-action="submit-rating" data-review-id="${escapeHtml(item.review.id)}" data-candidate-id="${escapeHtml(item.candidate.id)}" ${isSubmitting ? "disabled" : ""}>
+                ${isSubmitting ? "Saving…" : "Submit rating"}
+              </button>
+            </div>`
+          : `<p class="notification-awaiting">CEO or Managing Director rating is pending.</p>`
+      }
+    </article>
+  `;
+}
+
+function getPendingFounderReviewNotifications() {
+  return state.candidates
+    .filter((candidate) => !isCandidateDeleted(candidate))
+    .flatMap((candidate) =>
+      getCandidateFounderReviewRequests(candidate)
+        .filter((review) => review.status === "PENDING")
+        .map((review) => ({ candidate, review }))
+    )
+    .sort((left, right) => right.review.requestedAt.localeCompare(left.review.requestedAt));
+}
+
+function getCandidateFounderReviewRequests(candidate) {
+  const parsedData = candidate?.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? candidate.parsedData
+    : {};
+  return (Array.isArray(parsedData.founderReviewRequests) ? parsedData.founderReviewRequests : [])
+    .filter((item) => item && typeof item === "object" && item.id)
+    .map((item) => ({
+      ...item,
+      id: String(item.id),
+      candidateId: String(item.candidateId || candidate.id),
+      stage: String(item.stage || candidate.stage || "Submitted"),
+      status: String(item.status || "PENDING").toUpperCase() === "COMPLETED" ? "COMPLETED" : "PENDING",
+      requestedAt: String(item.requestedAt || candidate.updatedAt || candidate.createdAt || ""),
+      requestedBy: item.requestedBy && typeof item.requestedBy === "object" ? item.requestedBy : {}
+    }));
+}
+
+function canCurrentUserSubmitFounderReview() {
+  const role = normalizeUserRole(getCurrentUser()?.role);
+  return role === "CEO" || role === "Managing Director";
+}
+
+function onNotificationInput(event) {
+  const field = event.target.dataset.notificationField;
+  const reviewId = String(event.target.dataset.reviewId || "");
+  if (!field || !reviewId) return;
+  const current = ui.notifications.drafts[reviewId] || { rating: "", notes: "" };
+  ui.notifications.drafts[reviewId] = { ...current, [field]: event.target.value };
+}
+
+function onNotificationClick(event) {
+  const actionNode = event.target.closest("[data-notification-action]");
+  if (!actionNode) return;
+  const action = actionNode.dataset.notificationAction;
+
+  if (action === "toggle") {
+    ui.notifications.open = !ui.notifications.open;
+    renderNotificationCenter();
+    return;
+  }
+  if (action === "close") {
+    ui.notifications.open = false;
+    renderNotificationCenter();
+    return;
+  }
+  if (action === "open-candidate") {
+    openCandidateFromNotification(actionNode.dataset.candidateId);
+    return;
+  }
+  if (action === "submit-rating") {
+    void submitFounderReviewRating(actionNode.dataset.candidateId, actionNode.dataset.reviewId);
+  }
+}
+
+function openCandidateFromNotification(candidateId) {
+  const candidate = findCandidateByIdAnywhere(candidateId);
+  if (!candidate) return;
+  ui.activeSection = "candidates";
+  ui.candidates.view = isCandidateDeleted(candidate) ? "deleted" : "active";
+  ui.candidates.selectedId = candidate.id;
+  ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+  ui.notifications.open = false;
+  render();
+  focusCandidateSidePanel();
+}
+
+async function submitFounderReviewRating(candidateId, reviewId) {
+  if (!canCurrentUserSubmitFounderReview()) {
+    alert("Only the CEO or Managing Director can submit candidate ratings.");
+    return;
+  }
+  const draft = ui.notifications.drafts[reviewId] || {};
+  const rating = Number(draft.rating);
+  if (!Number.isFinite(rating) || rating < 1 || rating > 10) {
+    alert("Select a candidate rating between 1 and 10.");
+    return;
+  }
+
+  ui.notifications.submittingReviewId = reviewId;
+  renderNotificationCenter();
+  try {
+    const response = await fetch(buildApiUrl(API_ROUTES.founderReview(candidateId)), {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ reviewId, rating, notes: String(draft.notes || "").trim() })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.success || !payload?.candidate) {
+      throw new Error(payload?.error?.message || "Candidate rating could not be saved.");
+    }
+
+    const updated = mapApiCandidateToLocal(payload.candidate);
+    upsertCandidateInState(updated);
+    delete ui.notifications.drafts[reviewId];
+    recordActivity("candidate", `Founder rating completed for ${updated.name}: ${rating}/10`, {
+      action: "candidate.founder-rating",
+      candidateId: updated.id,
+      reviewId,
+      rating
+    });
+    saveAndRender();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Candidate rating could not be saved.");
+  } finally {
+    ui.notifications.submittingReviewId = "";
+    renderNotificationCenter();
+  }
 }
 
 function renderCurrentUserCard() {
@@ -11167,13 +11416,13 @@ async function hydrateStateFromBackend(options = {}) {
     ensureAuthenticatedUserInState();
     saveState(state);
     ui.bootstrapError = "";
-    render();
+    render({ preserveScroll: background });
     ui.bootstrapLoaded = true;
   } catch (error) {
     if (!background || !ui.bootstrapLoaded) {
       ui.bootstrapLoaded = false;
       ui.bootstrapError = error instanceof Error ? error.message : "Unable to load dashboard data";
-      render();
+      render({ preserveScroll: true });
     }
   } finally {
     ui.isHydratingFromBackend = false;
@@ -11247,7 +11496,7 @@ async function syncStateToBackend(options = {}) {
       state = normalizeState(payload.data);
       ensureAuthenticatedUserInState();
       saveState(state);
-      render();
+      render({ preserveScroll: true });
     }
 
     return true;
