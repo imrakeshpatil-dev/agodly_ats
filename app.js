@@ -4,6 +4,7 @@ const CURRENT_USER_ID_KEY = "agodly_ats_current_user_id";
 const AUTH_TOKEN_KEY = "agodly_ats_auth_token";
 const AUTH_USER_KEY = "agodly_ats_auth_user";
 const CANDIDATE_VIEWS_KEY = "agodly_ats_candidate_views_v1";
+const UI_DENSITY_KEY = "agodly_ats_ui_density_v1";
 const AGODLY_EMAIL_DOMAIN = "@agodly.com";
 const RUNTIME_API_BASE =
   typeof window !== "undefined" && typeof window.AGODLY_API_BASE === "string"
@@ -483,6 +484,7 @@ function refreshElementRefs() {
 
     pageTitle: document.getElementById("pageTitle"),
     searchInput: document.getElementById("searchInput"),
+    densityControl: document.getElementById("densityControl"),
     periodFilter: document.getElementById("periodFilter"),
     newRecordBtn: document.getElementById("newRecordBtn"),
     notificationCenter: document.getElementById("notificationCenter"),
@@ -629,6 +631,7 @@ initialize();
 
 function initialize() {
   ui.candidates.savedViews = loadCandidateViews();
+  applyWorkspaceDensity(localStorage.getItem(UI_DENSITY_KEY));
   applySharedCandidateViewFromUrl();
   bindEvents();
   render();
@@ -685,6 +688,10 @@ function bindEvents() {
     renderSection();
   });
 
+  el.densityControl?.addEventListener("change", (event) => {
+    applyWorkspaceDensity(event.target.value, true);
+  });
+
   el.newRecordBtn?.addEventListener("click", openCreateDialog);
   el.notificationCenter?.addEventListener("click", onNotificationClick);
   el.notificationCenter?.addEventListener("input", onNotificationInput);
@@ -705,6 +712,13 @@ function bindEvents() {
   el.sectionContainer?.addEventListener("dragover", onSectionDragOver);
   el.sectionContainer?.addEventListener("dragleave", onSectionDragLeave);
   el.sectionContainer?.addEventListener("drop", onSectionDrop);
+}
+
+function applyWorkspaceDensity(value, persist = false) {
+  const density = value === "compact" ? "compact" : "comfortable";
+  document.documentElement.dataset.density = density;
+  if (el.densityControl) el.densityControl.value = density;
+  if (persist) localStorage.setItem(UI_DENSITY_KEY, density);
 }
 
 function onSectionClick(event) {
