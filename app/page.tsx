@@ -3,6 +3,11 @@ import path from "node:path";
 
 import Script from "next/script";
 
+// The ATS shell is sourced from index.html, which Next.js does not track as a
+// module dependency. Render it at request time so deployments cannot reuse a
+// stale prerendered shell after index.html changes.
+export const dynamic = "force-dynamic";
+
 function readStaticAppBody() {
   const html = readFileSync(path.join(process.cwd(), "index.html"), "utf8");
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);

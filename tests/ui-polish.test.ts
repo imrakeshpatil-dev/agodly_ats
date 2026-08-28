@@ -7,10 +7,11 @@ const root = process.cwd();
 const read = (file: string) => readFile(path.join(root, file), "utf8");
 
 test("workspace density is accessible, persisted, and defaults to comfortable", async () => {
-  const [html, browser, styles] = await Promise.all([
+  const [html, browser, styles, page] = await Promise.all([
     read("index.html"),
     read("app.js"),
-    read("styles.css")
+    read("styles.css"),
+    read("app/page.tsx")
   ]);
 
   assert.match(html, /id="densityControl" aria-label="Workspace density"/);
@@ -20,6 +21,7 @@ test("workspace density is accessible, persisted, and defaults to comfortable", 
   assert.match(browser, /applyWorkspaceDensity\(localStorage\.getItem\(UI_DENSITY_KEY\)\)/);
   assert.match(browser, /document\.documentElement\.dataset\.density = density/);
   assert.match(styles, /html\[data-density="compact"\]/);
+  assert.match(page, /export const dynamic = "force-dynamic"/);
 });
 
 test("visual polish keeps the candidate list full width and opens the profile as a drawer", async () => {
