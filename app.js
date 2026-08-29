@@ -48,7 +48,17 @@ const API_ROUTES = {
   jobCandidatePool: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/candidate-pool`,
   founderReview: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/founder-review`,
   jobInsights: "/api/jobs/insights",
-  insightCandidatePool: "/api/jobs/insights/candidate-pool"
+  insightCandidatePool: "/api/jobs/insights/candidate-pool",
+  messageUsers: "/api/messages/users",
+  messageConversations: "/api/messages/conversations",
+  messageConversation: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}`,
+  messageSend: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}/messages`,
+  messageReceipts: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}/receipts`,
+  messageEvents: "/api/messages/events",
+  pushConfig: "/api/push/config",
+  pushSubscription: "/api/push/subscription",
+  pushPreferences: "/api/push/preferences",
+  pushTest: "/api/push/test"
 };
 const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "xlsx", "pdf", "doc", "docx"]);
@@ -286,6 +296,7 @@ const SECTION_CONFIG = {
   "ai-match": { title: "MY LLM", entity: null },
   pipeline: { title: "Pipeline", entity: null },
   interviews: { title: "Interviews", entity: "interviews" },
+  messages: { title: "Messages", entity: null },
   "bulk-upload": { title: "Bulk Upload", entity: null },
   users: { title: "Users", entity: "users" },
   "team-dashboard": { title: "Team Dashboard", entity: null },
@@ -451,6 +462,37 @@ const ui = {
     submittingReviewId: "",
     drafts: {}
   },
+  messaging: {
+    loaded: false,
+    directory: [],
+    conversations: [],
+    selectedId: "",
+    detail: null,
+    loading: false,
+    detailLoading: false,
+    error: "",
+    composerDraft: "",
+    sending: false,
+    newConversationOpen: false,
+    settingsOpen: false,
+    composeType: "DIRECT",
+    composeTitle: "",
+    composeCandidateId: "",
+    composeJobId: "",
+    selectedMemberIds: [],
+    creating: false,
+    streamAbort: null,
+    reconnectTimerId: 0,
+    push: {
+      configured: false,
+      publicKey: "",
+      subscribed: false,
+      permission: typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+      preferences: null,
+      loading: false,
+      error: ""
+    }
+  },
   bootstrapLoaded: false,
   bootstrapError: "",
   backendSyncInFlight: false,
@@ -487,6 +529,8 @@ function refreshElementRefs() {
     densityControl: document.getElementById("densityControl"),
     periodFilter: document.getElementById("periodFilter"),
     newRecordBtn: document.getElementById("newRecordBtn"),
+    messageQuickAccess: document.getElementById("messageQuickAccess"),
+    messageNavBadge: document.getElementById("messageNavBadge"),
     notificationCenter: document.getElementById("notificationCenter"),
 
     apiDot: document.getElementById("apiDot"),
@@ -633,6 +677,7 @@ function initialize() {
   ui.candidates.savedViews = loadCandidateViews();
   applyWorkspaceDensity(localStorage.getItem(UI_DENSITY_KEY));
   applySharedCandidateViewFromUrl();
+  applyMessagingViewFromUrl();
   bindEvents();
   render();
   checkBackendHealth();
@@ -659,9 +704,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       const section = button.dataset.section;
       if (!section) return;
-
-      ui.activeSection = section;
-      render();
+      goToSection(section);
       el.layout?.classList.remove("sidebar-open");
     });
   });
@@ -696,6 +739,7 @@ function bindEvents() {
   el.notificationCenter?.addEventListener("click", onNotificationClick);
   el.notificationCenter?.addEventListener("input", onNotificationInput);
   el.notificationCenter?.addEventListener("change", onNotificationInput);
+  el.messageQuickAccess?.addEventListener("click", () => goToSection("messages"));
   el.logoutBtn?.addEventListener("click", logoutCurrentUser);
   el.changePasswordBtn?.addEventListener("click", () => {
     openCurrentUserPasswordPanel();
@@ -726,6 +770,44 @@ function onSectionClick(event) {
   if (!actionNode) return;
 
   const action = actionNode.dataset.action;
+
+  if (action === "message-select") {
+    void loadMessagingConversation(actionNode.dataset.conversationId || "");
+    return;
+  }
+  if (action === "message-new-toggle") {
+    ui.messaging.newConversationOpen = !ui.messaging.newConversationOpen;
+    ui.messaging.settingsOpen = false;
+    renderSection();
+    return;
+  }
+  if (action === "message-settings-toggle") {
+    ui.messaging.settingsOpen = !ui.messaging.settingsOpen;
+    ui.messaging.newConversationOpen = false;
+    if (ui.messaging.settingsOpen) void loadPushConfiguration();
+    renderSection();
+    return;
+  }
+  if (action === "message-create") {
+    void createMessagingConversation();
+    return;
+  }
+  if (action === "message-send") {
+    void sendMessagingMessage();
+    return;
+  }
+  if (action === "message-push-enable") {
+    void enablePushNotifications();
+    return;
+  }
+  if (action === "message-push-disable") {
+    void disablePushNotifications();
+    return;
+  }
+  if (action === "message-push-test") {
+    void sendTestPushNotification();
+    return;
+  }
 
   if (action === "go-section") {
     goToSection(actionNode.dataset.section || "dashboard");
@@ -1303,6 +1385,40 @@ function onSectionClick(event) {
 }
 
 function onSectionChange(event) {
+  if (event.target.matches("[data-action='message-compose-type']")) {
+    ui.messaging.composeType = event.target.value === "GROUP" ? "GROUP" : "DIRECT";
+    if (ui.messaging.composeType === "DIRECT") ui.messaging.selectedMemberIds = ui.messaging.selectedMemberIds.slice(0, 1);
+    renderSection();
+    return;
+  }
+  if (event.target.matches("[data-action='message-member-select']")) {
+    const userId = String(event.target.value || "");
+    if (ui.messaging.composeType === "DIRECT") {
+      ui.messaging.selectedMemberIds = event.target.checked ? [userId] : [];
+    } else if (event.target.checked) {
+      ui.messaging.selectedMemberIds = [...new Set([...ui.messaging.selectedMemberIds, userId])];
+    } else {
+      ui.messaging.selectedMemberIds = ui.messaging.selectedMemberIds.filter((id) => id !== userId);
+    }
+    renderSection();
+    return;
+  }
+  if (event.target.matches("[data-action='message-compose-candidate']")) {
+    ui.messaging.composeCandidateId = event.target.value;
+    if (event.target.value) ui.messaging.composeJobId = "";
+    renderSection();
+    return;
+  }
+  if (event.target.matches("[data-action='message-compose-job']")) {
+    ui.messaging.composeJobId = event.target.value;
+    if (event.target.value) ui.messaging.composeCandidateId = "";
+    renderSection();
+    return;
+  }
+  if (event.target.matches("[data-action='message-push-preference']")) {
+    void savePushPreference(event.target.dataset.field || "", event.target.checked);
+    return;
+  }
   if (event.target.matches("#bulkUploadSpreadsheetInput")) {
     void previewBulkImport(event.target.files);
     event.target.value = "";
@@ -1544,6 +1660,16 @@ function onSectionChange(event) {
 }
 
 function onSectionInput(event) {
+  if (event.target.matches("[data-action='message-draft']")) {
+    ui.messaging.composerDraft = event.target.value;
+    const sendButton = el.sectionContainer?.querySelector("[data-action='message-send']");
+    if (sendButton) sendButton.disabled = ui.messaging.sending || !ui.messaging.composerDraft.trim();
+    return;
+  }
+  if (event.target.matches("[data-action='message-compose-title']")) {
+    ui.messaging.composeTitle = event.target.value;
+    return;
+  }
   if (event.target.matches("[data-action='candidate-note-draft']")) {
     ui.candidates.noteDraft = event.target.value;
     return;
@@ -1680,6 +1806,11 @@ function onSectionInput(event) {
 }
 
 function onSectionKeydown(event) {
+  if (event.target.matches("[data-action='message-draft']") && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void sendMessagingMessage();
+    return;
+  }
   if (event.key === "Escape" && ui.activeSection === "candidates" && ui.candidates.selectedId) {
     event.preventDefault();
     closeCandidateSidePanel();
@@ -1823,6 +1954,7 @@ function render(options = {}) {
   renderToolbar();
   renderSection();
   renderNotificationCenter();
+  renderMessagingIndicators();
   renderApiStatus();
   renderCurrentUserCard();
   renderLoginState();
@@ -2084,6 +2216,7 @@ function renderNav() {
 }
 
 function enforceActiveSectionAccess() {
+  if (!isAuthenticated()) return;
   const allowedSections = getAllowedSectionsForCurrentUser();
   if (!allowedSections.has(ui.activeSection)) {
     ui.activeSection = "dashboard";
@@ -2104,6 +2237,7 @@ function getAllowedSectionsForCurrentUser() {
     "ai-match",
     "pipeline",
     "interviews",
+    "messages",
     "bulk-upload",
     "users",
     "team-dashboard",
@@ -2121,6 +2255,7 @@ function getAllowedSectionsForCurrentUser() {
     "ai-match",
     "pipeline",
     "interviews",
+    "messages",
     "bulk-upload",
     "recruiter-performance"
   ]);
@@ -2138,6 +2273,7 @@ function getAllowedSectionsForCurrentUser() {
     "jobs",
     "pipeline",
     "interviews",
+    "messages",
     "recruiter-performance"
   ]);
 
@@ -2154,6 +2290,13 @@ function renderToolbar() {
   el.searchInput.placeholder = canCurrentUserAccessFounderWorkspace()
     ? "Search candidates, jobs, clients"
     : "Search my candidates and assigned jobs";
+
+  if (ui.activeSection === "messages") {
+    el.searchInput.placeholder = "Search team conversations";
+    el.newRecordBtn.hidden = true;
+    el.newRecordBtn.disabled = true;
+    return;
+  }
 
   if (ui.activeSection === "jobs") {
     const canCreateJob = canCurrentUserWriteRecords();
@@ -2219,6 +2362,15 @@ function renderSection() {
 
   if (section === "interviews") {
     el.sectionContainer.innerHTML = renderInterviewsSection();
+    return;
+  }
+
+  if (section === "messages") {
+    if (!ui.messaging.loading && !ui.messaging.conversations.length && ui.api.connected) {
+      void loadMessagingOverview();
+    }
+    el.sectionContainer.innerHTML = renderMessagesSection();
+    window.requestAnimationFrame(scrollActiveMessageThreadToBottom);
     return;
   }
 
@@ -2295,7 +2447,540 @@ function goToSection(section) {
     return;
   }
   ui.activeSection = target;
+  if (target === "messages") updateMessagingUrl(ui.messaging.selectedId);
+  else clearMessagingUrl();
   render();
+}
+
+function applyMessagingViewFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("section") === "messages") ui.activeSection = "messages";
+  const conversationId = String(params.get("conversation") || "").trim();
+  if (conversationId) ui.messaging.selectedId = conversationId;
+}
+
+function renderMessagingIndicators() {
+  const unread = ui.messaging.conversations.reduce((total, conversation) => total + Number(conversation.unreadCount || 0), 0);
+  if (el.messageNavBadge) {
+    el.messageNavBadge.hidden = unread < 1;
+    el.messageNavBadge.style.display = unread > 0 ? "inline-block" : "none";
+    el.messageNavBadge.textContent = unread > 0 ? (unread > 99 ? "99+" : String(unread)) : "";
+  }
+  const badge = el.messageQuickAccess?.querySelector("strong");
+  if (el.messageQuickAccess) {
+    el.messageQuickAccess.classList.toggle("has-alerts", unread > 0);
+    el.messageQuickAccess.setAttribute("aria-label", unread ? `Open team messages, ${unread} unread` : "Open team messages");
+  }
+  if (badge) {
+    badge.hidden = unread < 1;
+    badge.style.display = unread > 0 ? "grid" : "none";
+    badge.textContent = unread > 0 ? (unread > 99 ? "99+" : String(unread)) : "";
+  }
+}
+
+function renderMessagesSection() {
+  const currentUser = getCurrentUser();
+  const selected = ui.messaging.detail?.conversation?.id === ui.messaging.selectedId ? ui.messaging.detail : null;
+  const search = String(ui.search || "").toLowerCase();
+  const conversations = ui.messaging.conversations.filter((conversation) => {
+    if (!search) return true;
+    return [conversation.title, conversation.lastMessage?.body, ...(conversation.members || []).map((member) => member.name)]
+      .some((value) => String(value || "").toLowerCase().includes(search));
+  });
+
+  return `
+    <section class="messages-shell" aria-label="Team messages">
+      <header class="messages-page-head">
+        <div>
+          <p class="jobs-eyebrow">Private team workspace</p>
+          <h2>Messages</h2>
+          <p>Direct, group, candidate and job conversations with delivery and read receipts.</p>
+        </div>
+        <div class="messages-head-actions">
+          <button class="tool-btn" type="button" data-action="message-settings-toggle">Notifications</button>
+          <button class="tool-btn primary" type="button" data-action="message-new-toggle">New conversation</button>
+        </div>
+      </header>
+      ${ui.messaging.error ? `<div class="message-error" role="alert">${escapeHtml(ui.messaging.error)}</div>` : ""}
+      ${ui.messaging.newConversationOpen ? renderNewConversationPanel() : ""}
+      ${ui.messaging.settingsOpen ? renderMessageNotificationSettings() : ""}
+      <div class="messages-layout">
+        <aside class="conversation-sidebar" aria-label="Conversations">
+          <div class="conversation-sidebar-head">
+            <strong>Inbox</strong>
+            <span>${conversations.length} conversation${conversations.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="conversation-list" data-scroll-preserve>
+            ${
+              ui.messaging.loading && !ui.messaging.loaded
+                ? `<div class="messages-empty"><span class="loading-spinner" aria-hidden="true"></span><p>Loading conversations…</p></div>`
+                : conversations.length
+                  ? conversations.map(renderConversationListItem).join("")
+                  : `<div class="messages-empty"><strong>No conversations yet</strong><p>Start a direct or group chat with your team.</p><button class="tool-btn" type="button" data-action="message-new-toggle">Start chatting</button></div>`
+            }
+          </div>
+        </aside>
+        <article class="message-thread" aria-live="polite">
+          ${
+            ui.messaging.detailLoading
+              ? `<div class="messages-empty thread-empty"><span class="loading-spinner" aria-hidden="true"></span><p>Opening conversation…</p></div>`
+              : selected
+                ? renderConversationThread(selected, currentUser)
+                : `<div class="messages-empty thread-empty"><span class="thread-empty-icon" aria-hidden="true">💬</span><strong>Select a conversation</strong><p>Your candidate and team discussions stay together here.</p></div>`
+          }
+        </article>
+      </div>
+    </section>`;
+}
+
+function renderConversationListItem(conversation) {
+  const active = conversation.id === ui.messaging.selectedId;
+  const unread = Number(conversation.unreadCount || 0);
+  const preview = conversation.lastMessage
+    ? `${conversation.lastMessage.isOwn ? "You: " : ""}${conversation.lastMessage.body}`
+    : "No messages yet";
+  return `
+    <button class="conversation-item ${active ? "is-active" : ""} ${unread ? "has-unread" : ""}" type="button" data-action="message-select" data-conversation-id="${escapeHtml(conversation.id)}">
+      <span class="message-avatar" aria-hidden="true">${escapeHtml(initials(conversation.title))}</span>
+      <span class="conversation-copy">
+        <span class="conversation-line"><strong>${escapeHtml(conversation.title || "Conversation")}</strong><time>${escapeHtml(formatMessageTime(conversation.lastMessageAt))}</time></span>
+        <span class="conversation-line"><span class="conversation-preview">${escapeHtml(preview)}</span>${unread ? `<b class="unread-pill">${unread > 99 ? "99+" : unread}</b>` : ""}</span>
+      </span>
+    </button>`;
+}
+
+function renderConversationThread(detail) {
+  const conversation = detail.conversation;
+  const messages = Array.isArray(detail.messages) ? detail.messages : [];
+  const context = conversation.candidateId
+    ? `Candidate · ${findCandidateByIdAnywhere(conversation.candidateId)?.name || conversation.candidateId}`
+    : conversation.jobId
+      ? `Job · ${findById(state.jobs, conversation.jobId)?.title || conversation.jobId}`
+      : conversation.type === "DIRECT"
+        ? "Direct message"
+        : `${conversation.members?.length || 0} members`;
+  const mentionHint = (conversation.members || [])
+    .filter((member) => member.userId !== getCurrentUser()?.id)
+    .map((member) => `@${member.name}`)
+    .slice(0, 3)
+    .join(" · ");
+  return `
+    <header class="message-thread-head">
+      <div class="message-avatar large" aria-hidden="true">${escapeHtml(initials(conversation.title))}</div>
+      <div><h3>${escapeHtml(conversation.title)}</h3><p>${escapeHtml(context)}</p></div>
+    </header>
+    <div class="message-history" data-scroll-preserve>
+      ${messages.length ? messages.map(renderMessageBubble).join("") : `<div class="messages-empty"><strong>Start the conversation</strong><p>Messages are visible only to members of this conversation.</p></div>`}
+    </div>
+    <footer class="message-composer">
+      ${mentionHint ? `<p class="mention-hint">Mention teammates with ${escapeHtml(mentionHint)}</p>` : ""}
+      <div class="message-compose-row">
+        <textarea data-action="message-draft" rows="2" maxlength="4000" placeholder="Write a message… (⌘/Ctrl + Enter to send)">${escapeHtml(ui.messaging.composerDraft)}</textarea>
+        <button class="message-send-btn" type="button" data-action="message-send" ${ui.messaging.sending || !ui.messaging.composerDraft.trim() ? "disabled" : ""}>${ui.messaging.sending ? "Sending…" : "Send"}</button>
+      </div>
+    </footer>`;
+}
+
+function renderMessageBubble(message) {
+  const receipt = message.receipt || {};
+  const receiptTitle = message.isOwn
+    ? `Delivered ${Number(receipt.deliveredCount || 0)}/${Number(receipt.recipientCount || 0)} · Seen ${Number(receipt.seenCount || 0)}/${Number(receipt.recipientCount || 0)}`
+    : "";
+  const receiptMark = receipt.status === "seen" ? "✓✓" : receipt.status === "delivered" ? "✓✓" : "✓";
+  return `
+    <div class="message-row ${message.isOwn ? "is-own" : "is-received"}">
+      <div class="message-bubble">
+        ${message.isOwn ? "" : `<strong class="message-sender">${escapeHtml(message.senderName || "Team member")}</strong>`}
+        <p>${escapeHtml(message.body).replace(/\n/g, "<br>")}</p>
+        <span class="message-meta"><time>${escapeHtml(formatMessageTime(message.createdAt, true))}</time>${message.isOwn ? `<span class="message-receipt is-${escapeHtml(receipt.status || "sent")}" title="${escapeHtml(receiptTitle)}">${receiptMark}</span>` : ""}</span>
+      </div>
+    </div>`;
+}
+
+function renderNewConversationPanel() {
+  const currentUserId = getCurrentUser()?.id;
+  const directory = ui.messaging.directory.filter((user) => user.id !== currentUserId);
+  const group = ui.messaging.composeType === "GROUP";
+  return `
+    <section class="message-setup-panel">
+      <header><div><strong>New conversation</strong><p>Choose a teammate, a group, or link the discussion to ATS work.</p></div><button class="ghost-icon" type="button" data-action="message-new-toggle" aria-label="Close">×</button></header>
+      <div class="message-setup-grid">
+        <label><span>Conversation type</span><select data-action="message-compose-type"><option value="DIRECT" ${group ? "" : "selected"}>Direct</option><option value="GROUP" ${group ? "selected" : ""}>Group</option></select></label>
+        ${group ? `<label><span>Group name</span><input data-action="message-compose-title" maxlength="120" value="${escapeHtml(ui.messaging.composeTitle)}" placeholder="e.g. Finance hiring team" /></label>` : ""}
+        <label><span>Candidate (optional)</span><select data-action="message-compose-candidate"><option value="">None</option>${state.candidates.filter((candidate) => !isCandidateDeleted(candidate)).map((candidate) => `<option value="${escapeHtml(candidate.id)}" ${ui.messaging.composeCandidateId === candidate.id ? "selected" : ""}>${escapeHtml(candidate.name)}</option>`).join("")}</select></label>
+        <label><span>Job (optional)</span><select data-action="message-compose-job"><option value="">None</option>${state.jobs.map((job) => `<option value="${escapeHtml(job.id)}" ${ui.messaging.composeJobId === job.id ? "selected" : ""}>${escapeHtml(job.title)}</option>`).join("")}</select></label>
+      </div>
+      <div class="message-member-picker">
+        ${directory.map((user) => `<label><input type="${group ? "checkbox" : "radio"}" name="messageMember" data-action="message-member-select" value="${escapeHtml(user.id)}" ${ui.messaging.selectedMemberIds.includes(user.id) ? "checked" : ""}/><span class="message-avatar small">${escapeHtml(initials(user.name))}</span><span><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.role || user.team || "Team")}</small></span></label>`).join("") || `<p>No active teammates are available.</p>`}
+      </div>
+      <div class="message-setup-actions"><button class="tool-btn" type="button" data-action="message-new-toggle">Cancel</button><button class="tool-btn primary" type="button" data-action="message-create" ${ui.messaging.creating || !ui.messaging.selectedMemberIds.length ? "disabled" : ""}>${ui.messaging.creating ? "Creating…" : "Create conversation"}</button></div>
+    </section>`;
+}
+
+function renderMessageNotificationSettings() {
+  const push = ui.messaging.push;
+  const preferences = push.preferences || {};
+  const canEnable = push.configured && push.permission !== "denied" && push.permission !== "unsupported";
+  const pushStatusLabel = push.subscribed
+    ? "Enabled on this device"
+    : push.permission === "denied"
+      ? "Blocked in browser settings"
+      : push.permission === "unsupported"
+        ? "This browser does not support Web Push"
+        : push.configured
+          ? "Not enabled on this device"
+          : "Server setup pending";
+  return `
+    <section class="message-setup-panel notification-settings-card">
+      <header><div><strong>Message notifications</strong><p>Push alerts show the sender and conversation, but never expose message content.</p></div><button class="ghost-icon" type="button" data-action="message-settings-toggle" aria-label="Close">×</button></header>
+      ${push.error ? `<div class="message-error">${escapeHtml(push.error)}</div>` : ""}
+      <div class="push-status"><span class="status-dot ${push.subscribed ? "ok" : ""}"></span><strong>${pushStatusLabel}</strong></div>
+      <div class="notification-preferences">
+        ${[["directMessages","Direct messages"],["groupMessages","Group messages"],["mentions","@mentions"],["candidateUpdates","Candidate-linked updates"],["jobUpdates","Job-linked updates"]].map(([field,label]) => `<label><input type="checkbox" data-action="message-push-preference" data-field="${field}" ${preferences[field] !== false ? "checked" : ""}/><span>${label}</span></label>`).join("")}
+      </div>
+      <div class="message-setup-actions">
+        ${push.subscribed ? `<button class="tool-btn danger" type="button" data-action="message-push-disable">Disable on this device</button><button class="tool-btn" type="button" data-action="message-push-test">Send test</button>` : `<button class="tool-btn primary" type="button" data-action="message-push-enable" ${!canEnable || push.loading ? "disabled" : ""}>${push.loading ? "Enabling…" : "Enable push notifications"}</button>`}
+      </div>
+    </section>`;
+}
+
+function initials(value) {
+  return String(value || "A").trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "A";
+}
+
+function formatMessageTime(value, includeTime = false) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  if (includeTime || sameDay) return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function scrollActiveMessageThreadToBottom() {
+  if (ui.activeSection !== "messages") return;
+  const history = document.querySelector(".message-history");
+  if (history) history.scrollTop = history.scrollHeight;
+}
+
+async function messagingApi(route, options = {}) {
+  const response = await fetch(buildApiUrl(route), {
+    ...options,
+    headers: getAuthHeaders({ Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || `Request failed with HTTP ${response.status}`);
+  return payload;
+}
+
+async function loadMessagingOverview(options = {}) {
+  if (!isAuthenticated() || !ui.api.connected || ui.messaging.loading) return;
+  ui.messaging.loading = true;
+  ui.messaging.error = "";
+  if (ui.activeSection === "messages") renderSection();
+  try {
+    const [directoryPayload, conversationsPayload] = await Promise.all([
+      messagingApi(API_ROUTES.messageUsers),
+      messagingApi(API_ROUTES.messageConversations)
+    ]);
+    ui.messaging.directory = Array.isArray(directoryPayload.users) ? directoryPayload.users : [];
+    ui.messaging.conversations = Array.isArray(conversationsPayload.conversations) ? conversationsPayload.conversations : [];
+    ui.messaging.loaded = true;
+    renderMessagingIndicators();
+
+    await Promise.allSettled(ui.messaging.conversations.map((conversation) => {
+      const message = conversation.lastMessage;
+      if (!message || message.senderUserId === getCurrentUser()?.id) return Promise.resolve();
+      return postMessagingReceipt(conversation.id, { deliveredThrough: message.id });
+    }));
+
+    const requestedId = ui.messaging.selectedId;
+    const fallbackId = options.selectFirst ? ui.messaging.conversations[0]?.id : "";
+    const selectedId = requestedId || fallbackId;
+    if (ui.activeSection === "messages" && selectedId && ui.messaging.conversations.some((conversation) => conversation.id === selectedId)) {
+      await loadMessagingConversation(selectedId, { skipOverviewRender: true });
+    }
+  } catch (error) {
+    ui.messaging.error = error instanceof Error ? error.message : "Messages could not be loaded.";
+  } finally {
+    ui.messaging.loading = false;
+    if (ui.activeSection === "messages") renderSection();
+    renderMessagingIndicators();
+  }
+}
+
+async function loadMessagingConversation(conversationId, options = {}) {
+  const id = String(conversationId || "").trim();
+  if (!id || ui.messaging.detailLoading) return;
+  ui.messaging.selectedId = id;
+  ui.messaging.detailLoading = true;
+  ui.messaging.error = "";
+  if (!options.skipOverviewRender && ui.activeSection === "messages") renderSection();
+  try {
+    const payload = await messagingApi(API_ROUTES.messageConversation(id));
+    ui.messaging.detail = { conversation: payload.conversation, messages: Array.isArray(payload.messages) ? payload.messages : [] };
+    const latest = ui.messaging.detail.messages.at(-1);
+    if (latest) await postMessagingReceipt(id, { deliveredThrough: latest.id, seenThrough: latest.id });
+    const listRow = ui.messaging.conversations.find((conversation) => conversation.id === id);
+    if (listRow) listRow.unreadCount = 0;
+    updateMessagingUrl(id);
+  } catch (error) {
+    ui.messaging.error = error instanceof Error ? error.message : "Conversation could not be opened.";
+  } finally {
+    ui.messaging.detailLoading = false;
+    renderMessagingIndicators();
+    if (ui.activeSection === "messages") {
+      renderSection();
+      window.requestAnimationFrame(scrollActiveMessageThreadToBottom);
+    }
+  }
+}
+
+async function postMessagingReceipt(conversationId, receipt) {
+  try {
+    await messagingApi(API_ROUTES.messageReceipts(conversationId), { method: "POST", body: JSON.stringify(receipt) });
+  } catch {
+    // Receipts are retried when the conversation is fetched again.
+  }
+}
+
+async function createMessagingConversation() {
+  if (!ui.messaging.selectedMemberIds.length || ui.messaging.creating) return;
+  ui.messaging.creating = true;
+  ui.messaging.error = "";
+  renderSection();
+  try {
+    const payload = await messagingApi(API_ROUTES.messageConversations, {
+      method: "POST",
+      body: JSON.stringify({
+        type: ui.messaging.composeType,
+        title: ui.messaging.composeTitle.trim(),
+        memberIds: ui.messaging.selectedMemberIds,
+        candidateId: ui.messaging.composeCandidateId || undefined,
+        jobId: ui.messaging.composeJobId || undefined
+      })
+    });
+    ui.messaging.newConversationOpen = false;
+    ui.messaging.composeTitle = "";
+    ui.messaging.composeCandidateId = "";
+    ui.messaging.composeJobId = "";
+    ui.messaging.selectedMemberIds = [];
+    ui.messaging.selectedId = payload.conversation.id;
+    await loadMessagingOverview();
+  } catch (error) {
+    ui.messaging.error = error instanceof Error ? error.message : "Conversation could not be created.";
+  } finally {
+    ui.messaging.creating = false;
+    if (ui.activeSection === "messages") renderSection();
+  }
+}
+
+async function sendMessagingMessage() {
+  const conversationId = ui.messaging.selectedId;
+  const body = ui.messaging.composerDraft.trim();
+  if (!conversationId || !body || ui.messaging.sending) return;
+  ui.messaging.sending = true;
+  ui.messaging.error = "";
+  const mentionedUserIds = (ui.messaging.detail?.conversation?.members || [])
+    .filter((member) => member.userId !== getCurrentUser()?.id)
+    .filter((member) => {
+      const name = String(member.name || "").toLowerCase();
+      const firstName = name.split(/\s+/)[0];
+      const message = body.toLowerCase();
+      return message.includes(`@${name}`) || (firstName && message.includes(`@${firstName}`));
+    })
+    .map((member) => member.userId);
+  const clientId = typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  renderSection();
+  try {
+    await messagingApi(API_ROUTES.messageSend(conversationId), {
+      method: "POST",
+      body: JSON.stringify({ body, clientId, mentionedUserIds })
+    });
+    ui.messaging.composerDraft = "";
+    await Promise.all([loadMessagingConversation(conversationId), loadMessagingOverview()]);
+  } catch (error) {
+    ui.messaging.error = error instanceof Error ? error.message : "Message could not be sent.";
+  } finally {
+    ui.messaging.sending = false;
+    if (ui.activeSection === "messages") renderSection();
+  }
+}
+
+function updateMessagingUrl(conversationId = "") {
+  const url = new URL(window.location.href);
+  url.searchParams.set("section", "messages");
+  if (conversationId) url.searchParams.set("conversation", conversationId);
+  else url.searchParams.delete("conversation");
+  window.history.replaceState({}, "", url);
+}
+
+function clearMessagingUrl() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("section") !== "messages") return;
+  url.searchParams.delete("section");
+  url.searchParams.delete("conversation");
+  window.history.replaceState({}, "", url);
+}
+
+function startMessagingRealtime() {
+  if (!auth.token || !ui.api.connected || ui.messaging.streamAbort) return;
+  const controller = new AbortController();
+  ui.messaging.streamAbort = controller;
+  void consumeMessagingEventStream(controller);
+}
+
+function stopMessagingRealtime() {
+  if (ui.messaging.reconnectTimerId) window.clearTimeout(ui.messaging.reconnectTimerId);
+  ui.messaging.reconnectTimerId = 0;
+  ui.messaging.streamAbort?.abort();
+  ui.messaging.streamAbort = null;
+}
+
+async function consumeMessagingEventStream(controller) {
+  try {
+    const response = await fetch(buildApiUrl(API_ROUTES.messageEvents), {
+      headers: getAuthHeaders({ Accept: "text/event-stream" }),
+      signal: controller.signal
+    });
+    if (!response.ok || !response.body) throw new Error(`Message stream failed with HTTP ${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() || "";
+      for (const block of blocks) {
+        const eventName = block.split("\n").find((line) => line.startsWith("event:"))?.slice(6).trim();
+        if (!eventName || eventName === "ready") continue;
+        const dataLine = block.split("\n").find((line) => line.startsWith("data:"));
+        let eventData = {};
+        try { eventData = JSON.parse(dataLine?.slice(5).trim() || "{}"); } catch { eventData = {}; }
+        await refreshMessagingFromEvent(eventName, eventData);
+      }
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) console.warn("Messaging live updates paused; reconnecting.", error);
+  } finally {
+    if (ui.messaging.streamAbort === controller) ui.messaging.streamAbort = null;
+    if (!controller.signal.aborted && isAuthenticated()) {
+      ui.messaging.reconnectTimerId = window.setTimeout(startMessagingRealtime, 3000);
+    }
+  }
+}
+
+async function refreshMessagingFromEvent(eventName, eventData) {
+  if (!["conversation.created", "message.created", "receipt.updated"].includes(eventName)) return;
+  await loadMessagingOverview();
+  if (ui.activeSection === "messages" && eventData.conversationId && eventData.conversationId === ui.messaging.selectedId) {
+    await loadMessagingConversation(ui.messaging.selectedId);
+  }
+}
+
+async function registerPushServiceWorker() {
+  if (!("serviceWorker" in navigator)) return null;
+  return navigator.serviceWorker.register("/sw.js", { scope: "/" });
+}
+
+async function loadPushConfiguration() {
+  if (!isAuthenticated() || !ui.api.connected) return;
+  try {
+    const [config, preferences] = await Promise.all([
+      messagingApi(API_ROUTES.pushConfig),
+      messagingApi(API_ROUTES.pushPreferences)
+    ]);
+    ui.messaging.push.configured = Boolean(config.configured);
+    ui.messaging.push.publicKey = String(config.publicKey || "");
+    ui.messaging.push.subscribed = Boolean(config.subscribed);
+    ui.messaging.push.preferences = preferences.preferences || {};
+    ui.messaging.push.permission = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+    ui.messaging.push.error = "";
+  } catch (error) {
+    ui.messaging.push.error = error instanceof Error ? error.message : "Notification settings could not be loaded.";
+  } finally {
+    if (ui.activeSection === "messages" && ui.messaging.settingsOpen) renderSection();
+  }
+}
+
+async function enablePushNotifications() {
+  const push = ui.messaging.push;
+  if (!push.configured || !push.publicKey || push.loading) return;
+  push.loading = true;
+  push.error = "";
+  renderSection();
+  try {
+    const permission = await Notification.requestPermission();
+    push.permission = permission;
+    if (permission !== "granted") throw new Error("Browser notification permission was not granted.");
+    const registration = await registerPushServiceWorker();
+    if (!registration) throw new Error("This browser does not support push notifications.");
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(push.publicKey) });
+    }
+    const json = subscription.toJSON();
+    await messagingApi(API_ROUTES.pushSubscription, {
+      method: "POST",
+      body: JSON.stringify({ endpoint: subscription.endpoint, keys: json.keys, userAgent: navigator.userAgent })
+    });
+    push.subscribed = true;
+  } catch (error) {
+    push.error = error instanceof Error ? error.message : "Push notifications could not be enabled.";
+  } finally {
+    push.loading = false;
+    renderSection();
+  }
+}
+
+async function disablePushNotifications() {
+  const push = ui.messaging.push;
+  push.error = "";
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration("/");
+    const subscription = await registration?.pushManager.getSubscription();
+    if (subscription) {
+      await messagingApi(API_ROUTES.pushSubscription, { method: "DELETE", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+      await subscription.unsubscribe();
+    }
+    push.subscribed = false;
+  } catch (error) {
+    push.error = error instanceof Error ? error.message : "Push notifications could not be disabled.";
+  } finally {
+    renderSection();
+  }
+}
+
+async function savePushPreference(field, checked) {
+  if (!field) return;
+  const previous = ui.messaging.push.preferences || {};
+  ui.messaging.push.preferences = { ...previous, [field]: Boolean(checked) };
+  try {
+    const payload = await messagingApi(API_ROUTES.pushPreferences, { method: "PATCH", body: JSON.stringify({ [field]: Boolean(checked) }) });
+    ui.messaging.push.preferences = payload.preferences || ui.messaging.push.preferences;
+  } catch (error) {
+    ui.messaging.push.preferences = previous;
+    ui.messaging.push.error = error instanceof Error ? error.message : "Preference could not be saved.";
+    renderSection();
+  }
+}
+
+async function sendTestPushNotification() {
+  try {
+    await messagingApi(API_ROUTES.pushTest, { method: "POST" });
+  } catch (error) {
+    ui.messaging.push.error = error instanceof Error ? error.message : "Test notification could not be sent.";
+    renderSection();
+  }
+}
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
 const CANDIDATE_SORT_FIELDS = {
@@ -11306,6 +11991,8 @@ async function validateStoredSession() {
 
 async function logoutCurrentUser() {
   const token = auth.token;
+  stopMessagingRealtime();
+  resetMessagingSessionState();
   auth.token = "";
   auth.user = null;
   auth.isChecking = false;
@@ -11432,6 +12119,9 @@ async function hydrateStateFromBackend(options = {}) {
     ui.bootstrapError = "";
     render({ preserveScroll: background });
     ui.bootstrapLoaded = true;
+    startMessagingRealtime();
+    void loadMessagingOverview();
+    void loadPushConfiguration();
   } catch (error) {
     if (!background || !ui.bootstrapLoaded) {
       ui.bootstrapLoaded = false;
@@ -11441,6 +12131,18 @@ async function hydrateStateFromBackend(options = {}) {
   } finally {
     ui.isHydratingFromBackend = false;
   }
+}
+
+function resetMessagingSessionState() {
+  ui.messaging.loaded = false;
+  ui.messaging.directory = [];
+  ui.messaging.conversations = [];
+  ui.messaging.selectedId = "";
+  ui.messaging.detail = null;
+  ui.messaging.error = "";
+  ui.messaging.composerDraft = "";
+  ui.messaging.push.subscribed = false;
+  ui.messaging.push.preferences = null;
 }
 
 function startSharedStateRefresh() {

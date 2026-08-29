@@ -78,6 +78,11 @@ export interface HandleOptions {
 
 type RouteContext = { params?: Record<string, string> | Promise<Record<string, string>> };
 
+export const authenticateRequest = (request: Request): AuthSession | null => {
+  const token = extractBearerToken(request.headers.get("authorization") ?? undefined);
+  return token ? authService.getSession(token) : null;
+};
+
 // `context` is typed loosely because Next.js generates a distinct RouteContext
 // per route (static vs dynamic) and validates the exported handler against it;
 // a single generic wrapper must accept all of them.
@@ -88,8 +93,7 @@ export const handle =
       const req = await buildRequest(request, (context ?? {}) as RouteContext);
 
       if (options.auth || options.founder) {
-        const token = extractBearerToken(request.headers.get("authorization") ?? undefined);
-        const session = token ? authService.getSession(token) : null;
+        const session = authenticateRequest(request);
         if (!session) {
           return errorResponse(new AppError("Unauthorized", 401));
         }

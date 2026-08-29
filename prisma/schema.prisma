@@ -209,6 +209,100 @@ model Activity {
   @@index([createdAt])
 }
 
+model Conversation {
+  id              String               @id @default(cuid())
+  type            String               @default("DIRECT")
+  title           String?
+  directKey       String?              @unique
+  candidateId     String?
+  jobId           String?
+  createdByUserId String
+  createdByName   String
+  createdByEmail  String
+  lastMessageAt   DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  members         ConversationMember[]
+  messages        Message[]
+
+  @@index([lastMessageAt])
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([createdByUserId])
+}
+
+model ConversationMember {
+  id                     String       @id @default(cuid())
+  conversationId         String
+  userId                 String
+  userName               String
+  userEmail              String
+  joinedAt               DateTime     @default(now())
+  leftAt                 DateTime?
+  lastDeliveredMessageId String?
+  lastDeliveredAt        DateTime?
+  lastReadMessageId      String?
+  lastReadAt             DateTime?
+  muted                  Boolean      @default(false)
+  pushEnabled            Boolean      @default(true)
+  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId, leftAt])
+  @@index([conversationId, lastReadAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  clientId       String?      @unique
+  conversationId String
+  senderUserId   String
+  senderName     String
+  senderEmail    String
+  body           String
+  kind           String       @default("TEXT")
+  metadata       Json         @default("{}")
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderUserId, createdAt])
+}
+
+model PushSubscription {
+  id            String    @id @default(cuid())
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  active        Boolean   @default(true)
+  failureCount  Int       @default(0)
+  lastSuccessAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId, active])
+}
+
+model NotificationPreference {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  pushEnabled        Boolean  @default(true)
+  directMessages     Boolean  @default(true)
+  groupMessages      Boolean  @default(true)
+  mentions           Boolean  @default(true)
+  candidateUpdates   Boolean  @default(true)
+  jobUpdates         Boolean  @default(true)
+  interviewReminders Boolean  @default(true)
+  followUpReminders  Boolean  @default(true)
+  founderReviews     Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
 model RuntimeState {
   key       String   @id
   value     Json
