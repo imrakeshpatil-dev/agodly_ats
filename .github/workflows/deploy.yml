@@ -166,11 +166,9 @@ jobs:
             git reset --hard origin/main
             echo ">> Installing locked dependencies..."
             npm ci
-            echo ">> Ensuring persistent Web Push credentials..."
-            npm run push:ensure-keys
             echo ">> Building..."
             npm run build
-            echo ">> Applying additive database migrations..."
+            echo ">> Applying database migrations..."
             npm run prisma:migrate:deploy
             echo ">> Restarting only agodly-ats..."
             pm2 restart agodly-ats
