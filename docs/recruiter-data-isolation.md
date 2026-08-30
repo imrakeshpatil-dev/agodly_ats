@@ -43,7 +43,7 @@ Dashboards, totals, reports, autocomplete/search, and browser-generated exports 
 
 Bulk-upload history is stored per authenticated user. Candidate notes in historical upload snapshots are re-filtered against permitted candidate IDs, duplicate matches belonging to other recruiters are removed, and blocked duplicate responses do not disclose matched candidate IDs.
 
-## MY LLM and AI Match
+## AI shortlisting and matching
 
 Authenticated user context is mandatory at every AI controller. Candidate search, count, JD matching, candidate summary, and ATS-sheet tools use scoped candidate-store methods. Authenticated AI calls never use the unrestricted Prisma/fallback path. Candidate IDs outside scope return not found and are audit-logged.
 
@@ -59,7 +59,7 @@ Denied record lookups and ownership violations record only user ID, endpoint, en
 
 ## Verification coverage
 
-`tests/recruiter-data-isolation.test.ts` creates Admin A, Manager A, Recruiter A, Recruiter B, Candidate A, and Candidate B authorization fixtures. It proves reciprocal recruiter isolation across list/single/update APIs, candidate-linked state, jobs, clients, interviews, placements, activities, upload history, finance fields, sync payloads, malicious Candidate B IDs, MY LLM tools, conversations, memories, and feedback. Manager team scope and Admin company scope are also covered.
+`tests/recruiter-data-isolation.test.ts` creates Admin A, Manager A, Recruiter A, Recruiter B, Candidate A, and Candidate B authorization fixtures. It proves reciprocal recruiter isolation across list/single/update APIs, candidate-linked state, jobs, clients, interviews, placements, activities, upload history, finance fields, sync payloads, malicious Candidate B IDs, AI tools, memories, and feedback. Manager team scope and Admin company scope are also covered.
 
 Final release verification must run:
 
@@ -80,7 +80,7 @@ Production deployment is permitted only while every command and recruiter-isolat
 - Candidate APIs protected: PASS
 - Resume access protected: PASS
 - Pipeline protected: PASS
-- MY LLM protected: PASS
+- AI tools protected: PASS
 - Reports/exports protected: PASS
 - Frontend tested: PASS
 - Production build: PASS

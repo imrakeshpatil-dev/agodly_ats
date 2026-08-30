@@ -191,7 +191,7 @@ test("candidate list, single-record, and update API controllers enforce scope an
   }
 });
 
-test("MY LLM uses only scoped candidate queries and cannot summarize Recruiter B's candidate", async () => {
+test("AI candidate tools use only scoped queries and cannot summarize Recruiter B's candidate", async () => {
   const originalScopedActive = candidateStoreService.getActiveCandidatesForContext;
   const originalScopedSingle = candidateStoreService.getCandidateForContext;
   const originalUnscopedSingle = candidateStoreService.getCandidateById;

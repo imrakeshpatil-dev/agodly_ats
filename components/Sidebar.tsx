@@ -8,7 +8,6 @@ const items = [
   { label: "Candidates", href: "/candidates" },
   { label: "Clients", href: "/clients" },
   { label: "Jobs", href: "/jobs" },
-  { label: "AI Match", href: "/ai-match" },
   { label: "Pipeline", href: "/pipeline" },
   { label: "Bulk Upload", href: "/bulk-upload" },
   { label: "Users", href: "/users" }

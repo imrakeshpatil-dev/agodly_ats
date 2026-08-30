@@ -6,7 +6,7 @@ import { test } from "node:test";
 const root = process.cwd();
 const read = (file: string) => readFile(path.join(root, file), "utf8");
 
-test("MY LLM and AI Match use the configured provider abstraction", async () => {
+test("AI shortlisting uses the configured provider abstraction", async () => {
   const [agent, tools] = await Promise.all([
     read("lib/server/services/aiAgentService.ts"),
     read("lib/server/services/aiTools.ts")

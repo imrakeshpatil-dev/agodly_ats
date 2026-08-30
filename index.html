@@ -36,10 +36,8 @@
           <button class="nav-btn" data-section="candidate-pool" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg></span><span class="nav-label">Candidate Pool</span></button>
           <button class="nav-btn" data-section="clients" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16v2H4zM6 17V7l6-3 6 3v10h-2V8.3l-4-2-4 2V17z"/></svg></span><span class="nav-label">Clients</span></button>
           <button class="nav-btn" data-section="jobs" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 5V3h6v2h5v14H4V5zm2 0h2V4h-2zm-5 4v8h12V9z"/></svg></span><span class="nav-label">Jobs</span></button>
-          <button class="nav-btn" data-section="ai-match" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l2.2 4.8L19 9l-4.8 2.2L12 16l-2.2-4.8L5 9l4.8-2.2zM5 16l1.2 2.8L9 20l-2.8 1.2L5 24l-1.2-2.8L1 20l2.8-1.2zM19 14l1.2 2.8L23 18l-2.8 1.2L19 22l-1.2-2.8L15 18l2.8-1.2z"/></svg></span><span class="nav-label">MY LLM</span></button>
           <button class="nav-btn" data-section="pipeline" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h6v4H4zm10 0h6v4h-6zM9 18h6v-4H9zM10 7h4v2h-4zm7 2h2v3h-2zm-12 0h2v3H5zm6 3h2v2h-2z"/></svg></span><span class="nav-label">Pipeline</span></button>
           <button class="nav-btn" data-section="interviews" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 2h2v2h6V2h2v2h3v18H4V4zm11 6H6v12h12zM8 12h8v2H8zm0 4h5v2H8z"/></svg></span><span class="nav-label">Interviews</span></button>
-          <button class="nav-btn" data-section="messages" type="button"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm1 4v2h14V7zm0 4v2h10v-2z"/></svg></span><span class="nav-label">Messages</span><span id="messageNavBadge" class="nav-count" hidden></span></button>
         </div>
 
         <div class="nav-group">
@@ -80,7 +78,6 @@
           </div>
 
           <div class="toolbar-right d-flex flex-wrap align-items-center justify-content-end gap-2">
-            <button id="messageQuickAccess" class="notification-bell message-quick-access" type="button" aria-label="Open team messages" title="Team messages"><span aria-hidden="true">💬</span><strong hidden></strong></button>
             <div id="notificationCenter" class="notification-center" aria-label="Candidate review notifications"></div>
             <input id="searchInput" type="search" placeholder="Search candidates, jobs, clients" />
             <select id="densityControl" aria-label="Workspace density">

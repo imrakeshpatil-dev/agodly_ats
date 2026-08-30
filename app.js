@@ -48,17 +48,7 @@ const API_ROUTES = {
   jobCandidatePool: (jobId) => `/api/jobs/${encodeURIComponent(jobId)}/candidate-pool`,
   founderReview: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/founder-review`,
   jobInsights: "/api/jobs/insights",
-  insightCandidatePool: "/api/jobs/insights/candidate-pool",
-  messageUsers: "/api/messages/users",
-  messageConversations: "/api/messages/conversations",
-  messageConversation: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}`,
-  messageSend: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}/messages`,
-  messageReceipts: (conversationId) => `/api/messages/conversations/${encodeURIComponent(conversationId)}/receipts`,
-  messageEvents: "/api/messages/events",
-  pushConfig: "/api/push/config",
-  pushSubscription: "/api/push/subscription",
-  pushPreferences: "/api/push/preferences",
-  pushTest: "/api/push/test"
+  insightCandidatePool: "/api/jobs/insights/candidate-pool"
 };
 const BULK_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "xlsx", "pdf", "doc", "docx"]);
@@ -293,10 +283,8 @@ const SECTION_CONFIG = {
   "candidate-pool": { title: "Candidate Pool", entity: null },
   clients: { title: "Clients", entity: "clients" },
   jobs: { title: "Jobs", entity: "jobs" },
-  "ai-match": { title: "MY LLM", entity: null },
   pipeline: { title: "Pipeline", entity: null },
   interviews: { title: "Interviews", entity: "interviews" },
-  messages: { title: "Messages", entity: null },
   "bulk-upload": { title: "Bulk Upload", entity: null },
   users: { title: "Users", entity: "users" },
   "team-dashboard": { title: "Team Dashboard", entity: null },
@@ -444,7 +432,10 @@ const ui = {
     auditJobId: "",
     auditEntries: [],
     auditLoading: false,
-    isSaving: false
+    isSaving: false,
+    aiShortlistJobId: "",
+    aiShortlistLoading: false,
+    aiShortlist: null
   },
   bulkUpload: {
     isProcessing: false,
@@ -461,37 +452,6 @@ const ui = {
     open: false,
     submittingReviewId: "",
     drafts: {}
-  },
-  messaging: {
-    loaded: false,
-    directory: [],
-    conversations: [],
-    selectedId: "",
-    detail: null,
-    loading: false,
-    detailLoading: false,
-    error: "",
-    composerDraft: "",
-    sending: false,
-    newConversationOpen: false,
-    settingsOpen: false,
-    composeType: "DIRECT",
-    composeTitle: "",
-    composeCandidateId: "",
-    composeJobId: "",
-    selectedMemberIds: [],
-    creating: false,
-    streamAbort: null,
-    reconnectTimerId: 0,
-    push: {
-      configured: false,
-      publicKey: "",
-      subscribed: false,
-      permission: typeof Notification === "undefined" ? "unsupported" : Notification.permission,
-      preferences: null,
-      loading: false,
-      error: ""
-    }
   },
   bootstrapLoaded: false,
   bootstrapError: "",
@@ -529,8 +489,6 @@ function refreshElementRefs() {
     densityControl: document.getElementById("densityControl"),
     periodFilter: document.getElementById("periodFilter"),
     newRecordBtn: document.getElementById("newRecordBtn"),
-    messageQuickAccess: document.getElementById("messageQuickAccess"),
-    messageNavBadge: document.getElementById("messageNavBadge"),
     notificationCenter: document.getElementById("notificationCenter"),
 
     apiDot: document.getElementById("apiDot"),
@@ -677,7 +635,6 @@ function initialize() {
   ui.candidates.savedViews = loadCandidateViews();
   applyWorkspaceDensity(localStorage.getItem(UI_DENSITY_KEY));
   applySharedCandidateViewFromUrl();
-  applyMessagingViewFromUrl();
   bindEvents();
   render();
   checkBackendHealth();
@@ -739,7 +696,6 @@ function bindEvents() {
   el.notificationCenter?.addEventListener("click", onNotificationClick);
   el.notificationCenter?.addEventListener("input", onNotificationInput);
   el.notificationCenter?.addEventListener("change", onNotificationInput);
-  el.messageQuickAccess?.addEventListener("click", () => goToSection("messages"));
   el.logoutBtn?.addEventListener("click", logoutCurrentUser);
   el.changePasswordBtn?.addEventListener("click", () => {
     openCurrentUserPasswordPanel();
@@ -770,44 +726,6 @@ function onSectionClick(event) {
   if (!actionNode) return;
 
   const action = actionNode.dataset.action;
-
-  if (action === "message-select") {
-    void loadMessagingConversation(actionNode.dataset.conversationId || "");
-    return;
-  }
-  if (action === "message-new-toggle") {
-    ui.messaging.newConversationOpen = !ui.messaging.newConversationOpen;
-    ui.messaging.settingsOpen = false;
-    renderSection();
-    return;
-  }
-  if (action === "message-settings-toggle") {
-    ui.messaging.settingsOpen = !ui.messaging.settingsOpen;
-    ui.messaging.newConversationOpen = false;
-    if (ui.messaging.settingsOpen) void loadPushConfiguration();
-    renderSection();
-    return;
-  }
-  if (action === "message-create") {
-    void createMessagingConversation();
-    return;
-  }
-  if (action === "message-send") {
-    void sendMessagingMessage();
-    return;
-  }
-  if (action === "message-push-enable") {
-    void enablePushNotifications();
-    return;
-  }
-  if (action === "message-push-disable") {
-    void disablePushNotifications();
-    return;
-  }
-  if (action === "message-push-test") {
-    void sendTestPushNotification();
-    return;
-  }
 
   if (action === "go-section") {
     goToSection(actionNode.dataset.section || "dashboard");
@@ -1301,6 +1219,22 @@ function onSectionClick(event) {
     return;
   }
 
+  if (action === "run-job-ai-shortlist") {
+    void runJobAiShortlist(actionNode.dataset.jobId || "");
+    return;
+  }
+
+  if (action === "open-job-shortlist-candidate") {
+    const candidate = findCandidateByIdAnywhere(actionNode.dataset.candidateId);
+    if (!candidate) return;
+    ui.activeSection = "candidates";
+    ui.candidates.selectedId = candidate.id;
+    ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    render();
+    focusCandidateSidePanel();
+    return;
+  }
+
   if (action === "duplicate-job") {
     void duplicateJobViaApi(actionNode.dataset.jobId || "");
     return;
@@ -1385,40 +1319,6 @@ function onSectionClick(event) {
 }
 
 function onSectionChange(event) {
-  if (event.target.matches("[data-action='message-compose-type']")) {
-    ui.messaging.composeType = event.target.value === "GROUP" ? "GROUP" : "DIRECT";
-    if (ui.messaging.composeType === "DIRECT") ui.messaging.selectedMemberIds = ui.messaging.selectedMemberIds.slice(0, 1);
-    renderSection();
-    return;
-  }
-  if (event.target.matches("[data-action='message-member-select']")) {
-    const userId = String(event.target.value || "");
-    if (ui.messaging.composeType === "DIRECT") {
-      ui.messaging.selectedMemberIds = event.target.checked ? [userId] : [];
-    } else if (event.target.checked) {
-      ui.messaging.selectedMemberIds = [...new Set([...ui.messaging.selectedMemberIds, userId])];
-    } else {
-      ui.messaging.selectedMemberIds = ui.messaging.selectedMemberIds.filter((id) => id !== userId);
-    }
-    renderSection();
-    return;
-  }
-  if (event.target.matches("[data-action='message-compose-candidate']")) {
-    ui.messaging.composeCandidateId = event.target.value;
-    if (event.target.value) ui.messaging.composeJobId = "";
-    renderSection();
-    return;
-  }
-  if (event.target.matches("[data-action='message-compose-job']")) {
-    ui.messaging.composeJobId = event.target.value;
-    if (event.target.value) ui.messaging.composeCandidateId = "";
-    renderSection();
-    return;
-  }
-  if (event.target.matches("[data-action='message-push-preference']")) {
-    void savePushPreference(event.target.dataset.field || "", event.target.checked);
-    return;
-  }
   if (event.target.matches("#bulkUploadSpreadsheetInput")) {
     void previewBulkImport(event.target.files);
     event.target.value = "";
@@ -1660,16 +1560,6 @@ function onSectionChange(event) {
 }
 
 function onSectionInput(event) {
-  if (event.target.matches("[data-action='message-draft']")) {
-    ui.messaging.composerDraft = event.target.value;
-    const sendButton = el.sectionContainer?.querySelector("[data-action='message-send']");
-    if (sendButton) sendButton.disabled = ui.messaging.sending || !ui.messaging.composerDraft.trim();
-    return;
-  }
-  if (event.target.matches("[data-action='message-compose-title']")) {
-    ui.messaging.composeTitle = event.target.value;
-    return;
-  }
   if (event.target.matches("[data-action='candidate-note-draft']")) {
     ui.candidates.noteDraft = event.target.value;
     return;
@@ -1954,7 +1844,6 @@ function render(options = {}) {
   renderToolbar();
   renderSection();
   renderNotificationCenter();
-  renderMessagingIndicators();
   renderApiStatus();
   renderCurrentUserCard();
   renderLoginState();
@@ -2234,10 +2123,8 @@ function getAllowedSectionsForCurrentUser() {
     "candidate-pool",
     "clients",
     "jobs",
-    "ai-match",
     "pipeline",
     "interviews",
-    "messages",
     "bulk-upload",
     "users",
     "team-dashboard",
@@ -2252,10 +2139,8 @@ function getAllowedSectionsForCurrentUser() {
     "candidates",
     "candidate-pool",
     "jobs",
-    "ai-match",
     "pipeline",
     "interviews",
-    "messages",
     "bulk-upload",
     "recruiter-performance"
   ]);
@@ -2273,7 +2158,6 @@ function getAllowedSectionsForCurrentUser() {
     "jobs",
     "pipeline",
     "interviews",
-    "messages",
     "recruiter-performance"
   ]);
 
@@ -2290,13 +2174,6 @@ function renderToolbar() {
   el.searchInput.placeholder = canCurrentUserAccessFounderWorkspace()
     ? "Search candidates, jobs, clients"
     : "Search my candidates and assigned jobs";
-
-  if (ui.activeSection === "messages") {
-    el.searchInput.placeholder = "Search team conversations";
-    el.newRecordBtn.hidden = true;
-    el.newRecordBtn.disabled = true;
-    return;
-  }
 
   if (ui.activeSection === "jobs") {
     const canCreateJob = canCurrentUserWriteRecords();
@@ -2350,11 +2227,6 @@ function renderSection() {
     return;
   }
 
-  if (section === "ai-match") {
-    el.sectionContainer.innerHTML = renderAiMatchSection();
-    return;
-  }
-
   if (section === "pipeline") {
     el.sectionContainer.innerHTML = renderPipelineSection();
     return;
@@ -2362,15 +2234,6 @@ function renderSection() {
 
   if (section === "interviews") {
     el.sectionContainer.innerHTML = renderInterviewsSection();
-    return;
-  }
-
-  if (section === "messages") {
-    if (!ui.messaging.loading && !ui.messaging.conversations.length && ui.api.connected) {
-      void loadMessagingOverview();
-    }
-    el.sectionContainer.innerHTML = renderMessagesSection();
-    window.requestAnimationFrame(scrollActiveMessageThreadToBottom);
     return;
   }
 
@@ -2447,8 +2310,6 @@ function goToSection(section) {
     return;
   }
   ui.activeSection = target;
-  if (target === "messages") updateMessagingUrl(ui.messaging.selectedId);
-  else clearMessagingUrl();
   render();
 }
 
@@ -3356,7 +3217,7 @@ function renderDashboardSection() {
             : `
               ${quickActionButton("Candidates", "My candidate list", "candidates")}
               ${quickActionButton("Upload", "Bulk upload CVs", "bulk-upload")}
-              ${quickActionButton("AI Match", "Match against JD", "ai-match")}
+              ${quickActionButton("Shortlist", "Rank candidates for a job", "jobs")}
               ${quickActionButton("Pipeline", "Move stages", "pipeline")}
             `
         }
@@ -4461,6 +4322,7 @@ function renderJobsListSection() {
                           <summary class="tool-btn" aria-label="Actions for ${escapeHtml(job.title)}">Actions</summary>
                           <div class="job-actions-popover">
                             <button type="button" data-action="edit-job" data-job-id="${escapeHtml(job.id)}">Edit job</button>
+                            <button type="button" data-action="run-job-ai-shortlist" data-job-id="${escapeHtml(job.id)}">AI shortlist</button>
                             <button type="button" data-action="view-job-audit" data-job-id="${escapeHtml(job.id)}">View history</button>
                             <button type="button" data-action="duplicate-job" data-job-id="${escapeHtml(job.id)}">Duplicate as draft</button>
                             <button type="button" data-action="build-job-candidate-pool" data-job-id="${escapeHtml(job.id)}">Build candidate pool</button>
@@ -4486,6 +4348,7 @@ function renderJobsListSection() {
       `
       }
     </section>
+    ${renderJobAiShortlistPanel()}
     ${renderJobAuditPanel()}
   `;
 }
@@ -4528,6 +4391,85 @@ function renderHiringDemandInsights() {
       ` : ""}
     </section>
   `;
+}
+
+function renderJobAiShortlistPanel() {
+  const shortlist = ui.jobs.aiShortlist;
+  const job = findById(state.jobs, ui.jobs.aiShortlistJobId);
+  if (!job) return "";
+
+  const results = Array.isArray(shortlist?.results) ? shortlist.results : [];
+  return `
+    <section class="panel" aria-live="polite">
+      <div class="jobs-header">
+        <div>
+          <p class="jobs-eyebrow">AI-assisted shortlist</p>
+          <h2 class="panel-title">Best-fit candidates for ${escapeHtml(job.title)}</h2>
+          <p class="panel-subtitle">Ranked against this job’s description and required skills. Review the evidence before advancing anyone.</p>
+        </div>
+        <button class="tool-btn" type="button" data-action="run-job-ai-shortlist" data-job-id="${escapeHtml(job.id)}" ${ui.jobs.aiShortlistLoading ? "disabled" : ""}>${ui.jobs.aiShortlistLoading ? "Ranking…" : "Refresh shortlist"}</button>
+      </div>
+      ${shortlist?.error ? `<p class="form-error">${escapeHtml(shortlist.error)}</p>` : ""}
+      ${shortlist?.explanation ? `<p class="panel-subtitle">${escapeHtml(shortlist.explanation)}</p>` : ""}
+      <div class="myllm-card-grid">
+        ${results.length ? results.map((result) => {
+          const candidateId = String(result.id || result.candidateId || "");
+          const skills = Array.isArray(result.matchedSkills) ? result.matchedSkills.slice(0, 6).join(", ") : "";
+          return `<article class="confidence-card">
+            <p><strong>${escapeHtml(result.name || "Candidate")}</strong> ${result.matchPercentage != null ? `· ${Math.round(Number(result.matchPercentage))}% match` : ""}</p>
+            <p class="panel-subtitle">${escapeHtml([result.currentRole, result.currentCompany, result.location].filter(Boolean).join(" · ") || "Profile details")}</p>
+            ${skills ? `<p class="confidence-row">Matched skills: ${escapeHtml(skills)}</p>` : ""}
+            ${result.confidenceExplanation ? `<p class="confidence-note">${escapeHtml(result.confidenceExplanation)}</p>` : ""}
+            ${candidateId ? `<button class="tool-btn" type="button" data-action="open-job-shortlist-candidate" data-candidate-id="${escapeHtml(candidateId)}">Review candidate</button>` : ""}
+          </article>`;
+        }).join("") : `<p class="empty">${ui.jobs.aiShortlistLoading ? "Finding the strongest matches…" : "No suitable candidates were found for this requirement."}</p>`}
+      </div>
+    </section>
+  `;
+}
+
+async function runJobAiShortlist(jobId) {
+  const job = findById(state.jobs, jobId);
+  if (!job || ui.jobs.aiShortlistLoading) return;
+
+  const jobDescription = String(job.jdText || job.description || "").trim() || [
+    job.title,
+    Array.isArray(job.requiredSkills) ? `Required skills: ${job.requiredSkills.join(", ")}` : "",
+    job.minExperience != null ? `Minimum experience: ${job.minExperience} years` : "",
+    job.location ? `Location: ${job.location}` : ""
+  ].filter(Boolean).join("\n");
+
+  if (!jobDescription) {
+    alert("Add a job description or requirements before creating a shortlist.");
+    return;
+  }
+
+  ui.jobs.aiShortlistJobId = job.id;
+  ui.jobs.aiShortlistLoading = true;
+  ui.jobs.aiShortlist = null;
+  renderSection();
+  try {
+    const response = await fetch(buildApiUrl(API_ROUTES.aiMatchScore), {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        jobDescription,
+        keywords: Array.isArray(job.requiredSkills) ? job.requiredSkills.join(", ") : undefined,
+        topK: 15
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || "Could not create an AI shortlist.");
+    ui.jobs.aiShortlist = {
+      explanation: String(payload.explanation || "Candidates ranked against this job."),
+      results: Array.isArray(payload.results) ? payload.results : []
+    };
+  } catch (error) {
+    ui.jobs.aiShortlist = { error: error instanceof Error ? error.message : "Could not create an AI shortlist." };
+  } finally {
+    ui.jobs.aiShortlistLoading = false;
+    renderSection();
+  }
 }
 
 function renderJobAuditPanel() {
@@ -7188,7 +7130,7 @@ function getOperationalCommandCenter(candidates, jobs) {
     { label: "Interview Ready", value: interviewReady, help: "Qualified/submitted/interview", section: "pipeline", tone: "yellow" },
     { label: "Submitted", value: submitted, help: "Profiles shared forward", section: "pipeline", tone: "green" },
     { label: "Needs Follow-up", value: staleCandidates, help: "No update in 7+ days", section: "candidates", tone: staleCandidates ? "red" : "green" },
-    { label: "AI Match", value: "Run", help: "Paste JD and rank candidates", section: "ai-match", tone: "blue" },
+    { label: "Shortlist", value: "Run", help: "Rank candidates from a job", section: "jobs", tone: "blue" },
     { label: "Bulk Upload", value: "CV", help: "Add resumes to your pool", section: "bulk-upload", tone: "yellow" }
   ];
 }
@@ -11991,7 +11933,6 @@ async function validateStoredSession() {
 
 async function logoutCurrentUser() {
   const token = auth.token;
-  stopMessagingRealtime();
   resetMessagingSessionState();
   auth.token = "";
   auth.user = null;
@@ -12119,9 +12060,6 @@ async function hydrateStateFromBackend(options = {}) {
     ui.bootstrapError = "";
     render({ preserveScroll: background });
     ui.bootstrapLoaded = true;
-    startMessagingRealtime();
-    void loadMessagingOverview();
-    void loadPushConfiguration();
   } catch (error) {
     if (!background || !ui.bootstrapLoaded) {
       ui.bootstrapLoaded = false;
@@ -12133,17 +12071,7 @@ async function hydrateStateFromBackend(options = {}) {
   }
 }
 
-function resetMessagingSessionState() {
-  ui.messaging.loaded = false;
-  ui.messaging.directory = [];
-  ui.messaging.conversations = [];
-  ui.messaging.selectedId = "";
-  ui.messaging.detail = null;
-  ui.messaging.error = "";
-  ui.messaging.composerDraft = "";
-  ui.messaging.push.subscribed = false;
-  ui.messaging.push.preferences = null;
-}
+function resetMessagingSessionState() {}
 
 function startSharedStateRefresh() {
   if (ui.sharedStateRefreshTimerId) return;

@@ -112,4 +112,4 @@ The post-release resume directory is retained rather than deleted.
 
 ## Post-rollback verification
 
-Verify `/ready`, login, dashboard, Candidates, Jobs, Pipeline, Bulk Upload, MY LLM, AI Match, Revenue, an existing resume preview, and the candidate/job counts from `data-counts.json`.
+Verify `/ready`, login, dashboard, Candidates, Jobs, Pipeline, Bulk Upload, the job-level AI shortlist, Revenue, an existing resume preview, and the candidate/job counts from `data-counts.json`.
