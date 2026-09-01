@@ -50,6 +50,37 @@ test("candidate read and edit permissions isolate recruiters while manager and a
   );
 });
 
+test("job visibility supports organisation-wide sharing and a manager's direct team", () => {
+  const directReport = context("Recruiter", "usr-a", ["usr-a"], ["recruiter a", "a@agodly.com"]);
+  directReport.reportingManagerUserIds = new Set(["usr-manager"]);
+  directReport.reportingManagerAliases = new Set(["manager", "manager@agodly.com"]);
+
+  const directTeamJob = {
+    id: "job-manager-team",
+    visibilityScope: "DIRECT_TEAM",
+    ownerUserId: "usr-manager",
+    assignedRecruiterId: "usr-manager"
+  };
+  const organisationJob = {
+    id: "job-organisation",
+    visibilityScope: "ORGANIZATION",
+    ownerUserId: "usr-manager",
+    assignedRecruiterId: "usr-manager"
+  };
+  const unrelatedManagerJob = {
+    id: "job-other-team",
+    visibilityScope: "DIRECT_TEAM",
+    ownerUserId: "usr-other-manager",
+    assignedRecruiterId: "usr-other-manager"
+  };
+
+  assert.equal(authorizationService.canViewJob(directReport, directTeamJob), true);
+  assert.equal(authorizationService.canViewJob(recruiterB, directTeamJob), false);
+  assert.equal(authorizationService.canViewJob(recruiterB, organisationJob), true);
+  assert.equal(authorizationService.canViewJob(directReport, unrelatedManagerJob), false);
+  assert.equal(authorizationService.canEditJob(directReport, directTeamJob), false);
+});
+
 test("bootstrap state cannot reveal another recruiter's candidates, jobs, clients, interviews, exports, or bulk history", () => {
   const snapshot: AppStateSnapshot = {
     bulkUpload: {

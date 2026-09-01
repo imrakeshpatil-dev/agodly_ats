@@ -7,6 +7,7 @@ import {
   assertJobStatusTransition,
   buildDemandInsights,
   normalizeJobInput,
+  normalizeJobVisibilityScope,
   normalizeJobStatus
 } from "../lib/server/services/job-domain";
 
@@ -44,6 +45,18 @@ test("draft jobs may remain incomplete while publishing validates structured fie
   assert.equal(active.workMode, "REMOTE");
   assert.equal(active.primaryTimeZone, "Asia/Kolkata");
   assert.deepEqual(active.supportedTimeZones, ["Europe/London"]);
+});
+
+test("job visibility defaults to the direct recruiting team and accepts organisation sharing", () => {
+  assert.equal(normalizeJobVisibilityScope(undefined), "DIRECT_TEAM");
+  assert.equal(normalizeJobVisibilityScope("organisation"), "ORGANIZATION");
+  assert.equal(normalizeJobVisibilityScope("private"), "DIRECT_TEAM");
+  assert.equal(normalizeJobVisibilityScope("ORGANIZATION"), "ORGANIZATION");
+
+  const directTeam = normalizeJobInput({ title: "Platform Engineer", status: "DRAFT" });
+  const organisation = normalizeJobInput({ title: "Platform Engineer", status: "DRAFT", visibilityScope: "ORGANIZATION" });
+  assert.equal(directTeam.visibilityScope, "DIRECT_TEAM");
+  assert.equal(organisation.visibilityScope, "ORGANIZATION");
 });
 
 test("historical demand insights are derived from recorded jobs and candidate supply", () => {

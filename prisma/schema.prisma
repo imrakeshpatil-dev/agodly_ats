@@ -79,6 +79,7 @@ model Job {
   billingRateType        String?
   compensationUndisclosed Boolean  @default(false)
   priority               String    @default("NORMAL")
+  visibilityScope        String    @default("DIRECT_TEAM")
   status                 String    @default("DRAFT")
   statusReason           String?
   ownerUserId            String?
@@ -97,6 +98,7 @@ model Job {
   @@index([status, createdAt])
   @@index([clientId])
   @@index([assignedRecruiterId])
+  @@index([visibilityScope])
   @@index([archivedAt])
 }
 

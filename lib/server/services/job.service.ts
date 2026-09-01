@@ -13,6 +13,7 @@ import {
   classifyTechnologyFamily,
   normalizeJobInput,
   normalizeJobStatus,
+  type JobVisibilityScope,
   type JobStatus
 } from "./job-domain";
 import { prisma } from "./prisma.service";
@@ -58,6 +59,7 @@ class JobService {
 
     const defaultOwnerUserId = context.user.id;
     const normalized = normalizeJobInput(input, { defaultOwnerUserId });
+    this.assertCanUseVisibilityScope(context, normalized.visibilityScope);
     await this.ensureClientReference(normalized.clientId);
     const assignedRecruiterId = normalized.assignedRecruiterId || defaultOwnerUserId;
     this.assertCanAssign(context, assignedRecruiterId);
@@ -101,6 +103,9 @@ class JobService {
       existingStatus: existing.status,
       defaultOwnerUserId: existing.ownerUserId || context.user.id
     });
+    if (normalized.visibilityScope !== existing.visibilityScope) {
+      this.assertCanUseVisibilityScope(context, normalized.visibilityScope);
+    }
     await this.ensureClientReference(normalized.clientId);
     const assignedRecruiterId = normalized.assignedRecruiterId || existing.assignedRecruiterId || context.user.id;
     this.assertCanAssign(context, assignedRecruiterId);
@@ -299,6 +304,12 @@ class JobService {
     }
   }
 
+  private assertCanUseVisibilityScope(context: AuthorizationContext, visibilityScope: JobVisibilityScope): void {
+    if (visibilityScope === "ORGANIZATION" && !isFounderRole(context.user.role) && context.user.role !== "TA Manager") {
+      throw new AppError("Only TA Managers and administrators can share a job with the whole organisation", 403);
+    }
+  }
+
   private async requireJob(jobId: string): Promise<Job> {
     await this.ensureLegacyJobsImported();
     const job = await prisma.job.findUnique({ where: { id: String(jobId || "").trim() } });
@@ -449,6 +460,7 @@ const toPrismaJobData = (job: ReturnType<typeof normalizeJobInput>): Prisma.JobU
   billingRateType: job.billingRateType,
   compensationUndisclosed: job.compensationUndisclosed,
   priority: job.priority,
+  visibilityScope: job.visibilityScope,
   status: job.status,
   ownerUserId: job.ownerUserId,
   assignedRecruiterId: job.assignedRecruiterId,
@@ -494,10 +506,12 @@ const serializeJob = (job: Job): JobRecord => ({
   compensationUndisclosed: job.compensationUndisclosed,
   ctcNotDisclosed: job.compensationUndisclosed,
   priority: job.priority,
+  visibilityScope: job.visibilityScope,
   status: job.status,
   statusReason: job.statusReason || "",
   ownerUserId: job.ownerUserId || "",
   assignedRecruiterId: job.assignedRecruiterId || "",
+  createdByUserId: job.createdByUserId || "",
   openedAt: job.openedAt?.toISOString() || "",
   targetClosureAt: job.targetClosureAt?.toISOString() || "",
   closedAt: job.closedAt?.toISOString() || "",

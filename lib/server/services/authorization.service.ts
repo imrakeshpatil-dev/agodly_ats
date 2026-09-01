@@ -11,6 +11,8 @@ export interface AuthorizationContext {
   user: AuthUser;
   visibleUserIds: Set<string>;
   visibleAliases: Set<string>;
+  reportingManagerUserIds?: Set<string>;
+  reportingManagerAliases?: Set<string>;
 }
 
 export interface AuthorizationAuditEvent {
@@ -31,10 +33,28 @@ class AuthorizationService {
     const ownAliases = new Set([normalize(user.id), normalize(user.name), normalize(user.email)].filter(Boolean));
     const visibleUserIds = new Set<string>([normalize(user.id)]);
     const visibleAliases = new Set<string>(ownAliases);
+    const reportingManagerUserIds = new Set<string>();
+    const reportingManagerAliases = new Set<string>();
+
+    users
+      .filter((record) => userMatchesAliases(record, ownAliases))
+      .forEach((record) => {
+        [record.managerId, record.manager, record.managerEmail]
+          .map(normalize)
+          .filter(Boolean)
+          .forEach((reference) => reportingManagerAliases.add(reference));
+      });
+
+    users.forEach((record) => {
+      if (!userMatchesAliases(record, reportingManagerAliases)) return;
+      const id = normalize(record.id);
+      if (id) reportingManagerUserIds.add(id);
+      [record.name, record.email].map(normalize).filter(Boolean).forEach((alias) => reportingManagerAliases.add(alias));
+    });
 
     if (isFounderRole(user.role)) {
       users.forEach((record) => addUserIdentity(record, visibleUserIds, visibleAliases));
-      return { user, visibleUserIds, visibleAliases };
+      return { user, visibleUserIds, visibleAliases, reportingManagerUserIds, reportingManagerAliases };
     }
 
     if (user.role === "TA Manager") {
@@ -46,7 +66,7 @@ class AuthorizationService {
       });
     }
 
-    return { user, visibleUserIds, visibleAliases };
+    return { user, visibleUserIds, visibleAliases, reportingManagerUserIds, reportingManagerAliases };
   }
 
   canViewCandidate(context: AuthorizationContext, candidate: CandidateRecord): boolean {
@@ -94,6 +114,8 @@ class AuthorizationService {
 
   canViewJob(context: AuthorizationContext, job: AtsRecord): boolean {
     if (isFounderRole(context.user.role)) return true;
+    if (normalize(job.visibilityScope) === "organization") return true;
+    if (normalize(job.visibilityScope) === "direct_team" && this.isJobOwnedByReportingManager(context, job)) return true;
     const assignedIds = collectIdentityValues(job, ["ownerUserId", "assignedRecruiterId", "recruiterId", "assignedUserId"]);
     const assignedAliases = collectIdentityValues(job, ["owner", "recruiter", "assignedTo"]);
     if (!assignedIds.length && !assignedAliases.length) return true;
@@ -223,6 +245,14 @@ class AuthorizationService {
     return ids.some((id) => context.visibleUserIds.has(id)) || aliases.some((alias) => context.visibleAliases.has(alias));
   }
 
+  private isJobOwnedByReportingManager(context: AuthorizationContext, job: AtsRecord): boolean {
+    const managerIds = context.reportingManagerUserIds || new Set<string>();
+    const managerAliases = context.reportingManagerAliases || new Set<string>();
+    const ownerIds = collectIdentityValues(job, ["ownerUserId", "createdByUserId"]);
+    const ownerAliases = collectIdentityValues(job, ["owner", "createdBy", "createdByEmail"]);
+    return ownerIds.some((id) => managerIds.has(id)) || ownerAliases.some((alias) => managerAliases.has(alias));
+  }
+
   private scopeBulkUpload(bulkUpload: Record<string, unknown>, candidates: CandidateRecord[]): Record<string, unknown> {
     const visibleCandidateIds = new Set(candidates.map((candidate) => normalize(candidate.id)));
     const candidateNotes = toRecordArray(bulkUpload.candidateNotes)
@@ -253,6 +283,11 @@ const addUserIdentity = (record: AtsRecord, ids: Set<string>, aliases: Set<strin
   const id = normalize(record.id);
   if (id) ids.add(id);
   [record.name, record.email].map(normalize).filter(Boolean).forEach((alias) => aliases.add(alias));
+};
+
+const userMatchesAliases = (record: AtsRecord, aliases: Set<string>): boolean => {
+  if (!aliases.size) return false;
+  return [record.id, record.name, record.email].map(normalize).some((identity) => Boolean(identity) && aliases.has(identity));
 };
 
 const collectIdentityValues = (record: AtsRecord, fields: string[]): string[] =>

@@ -15,6 +15,8 @@ export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export const JOB_PRIORITIES = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const;
 export const WORK_MODES = ["ONSITE", "HYBRID", "REMOTE"] as const;
+export const JOB_VISIBILITY_SCOPES = ["DIRECT_TEAM", "ORGANIZATION"] as const;
+export type JobVisibilityScope = (typeof JOB_VISIBILITY_SCOPES)[number];
 
 type JobRecord = Record<string, unknown>;
 
@@ -86,6 +88,7 @@ export interface NormalizedJobInput {
   billingRateType: string | null;
   compensationUndisclosed: boolean;
   priority: string;
+  visibilityScope: JobVisibilityScope;
   assignedRecruiterId: string | null;
   ownerUserId: string | null;
   targetClosureAt: Date | null;
@@ -95,6 +98,11 @@ export interface NormalizedJobInput {
 export const normalizeJobStatus = (value: unknown): JobStatus => {
   const normalized = String(value || "DRAFT").trim().toLowerCase().replace(/-/g, "_");
   return STATUS_ALIASES[normalized] || "DRAFT";
+};
+
+export const normalizeJobVisibilityScope = (value: unknown): JobVisibilityScope => {
+  const normalized = String(value || "DIRECT_TEAM").trim().toUpperCase().replace(/[\s-]+/g, "_");
+  return normalized === "ORGANIZATION" || normalized === "ORGANISATION" ? "ORGANIZATION" : "DIRECT_TEAM";
 };
 
 export const assertJobStatusTransition = (fromValue: unknown, toValue: unknown): JobStatus => {
@@ -153,6 +161,7 @@ export const normalizeJobInput = (
     billingRateType: nullableLine(input.billingRateType, 30),
     compensationUndisclosed: Boolean(input.compensationUndisclosed ?? input.ctcNotDisclosed),
     priority: normalizeEnum(input.priority, JOB_PRIORITIES, "NORMAL") || "NORMAL",
+    visibilityScope: normalizeJobVisibilityScope(input.visibilityScope),
     assignedRecruiterId: nullableLine(input.assignedRecruiterId, 100),
     ownerUserId: nullableLine(input.ownerUserId, 100) || options.defaultOwnerUserId || null,
     targetClosureAt: nullableDate(input.targetClosureAt),

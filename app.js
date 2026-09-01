@@ -1526,6 +1526,11 @@ function onSectionChange(event) {
     return;
   }
 
+  if (event.target.matches("[data-action='job-visibility-scope']")) {
+    ui.jobs.draft.visibilityScope = event.target.value === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM";
+    return;
+  }
+
   if (event.target.matches("[data-action='job-work-mode']")) {
     ui.jobs.draft.workMode = event.target.value;
     renderSection();
@@ -4503,6 +4508,7 @@ function renderCreateJobSection() {
   const jobType = normalizeJobType(draft.jobType);
   const role = normalizeUserRole(getCurrentUser()?.role);
   const canCreateClient = canCurrentUserAccessFounderWorkspace() || role === "TA Manager";
+  const canSetOrganizationVisibility = canCurrentUserAccessFounderWorkspace() || role === "TA Manager";
 
   return `
     <section class="panel">
@@ -4584,6 +4590,17 @@ function renderCreateJobSection() {
         <label class="dialog-field">
           <span>Openings</span>
           <input data-action="job-openings" min="1" step="1" type="number" value="${escapeHtml(String(draft.openings || 1))}" />
+        </label>
+
+        <label class="dialog-field">
+          <span>Job visibility</span>
+          ${canSetOrganizationVisibility ? `
+            <select data-action="job-visibility-scope">
+              <option value="DIRECT_TEAM" ${draft.visibilityScope === "DIRECT_TEAM" ? "selected" : ""}>My direct recruiting team</option>
+              <option value="ORGANIZATION" ${draft.visibilityScope === "ORGANIZATION" ? "selected" : ""}>Everyone in the organisation</option>
+            </select>
+            <small>Direct team includes recruiters who report to you.</small>
+          ` : `<input value="My direct recruiting team" disabled /><small>Only TA Managers can share jobs with the whole organisation.</small>`}
         </label>
       </div>
     </section>
@@ -9573,6 +9590,7 @@ function createJobDraft(initial = {}) {
     workingHours: String(source.workingHours || ""),
     minTimeZoneOverlap: source.minTimeZoneOverlap == null ? "" : String(source.minTimeZoneOverlap),
     priority: String(source.priority || "NORMAL").toUpperCase(),
+    visibilityScope: String(source.visibilityScope || "DIRECT_TEAM").toUpperCase() === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM",
     jobType,
     openings: source.openings == null || source.openings === "" ? "1" : String(source.openings),
     expMin: source.expMin == null ? "" : String(source.expMin),
@@ -9857,7 +9875,8 @@ async function submitJobDraft(targetStatus) {
     supportedTimeZones: uniqueStringsLocal(draft.supportedTimeZones || []),
     workingHours: String(draft.workingHours || ""),
     minTimeZoneOverlap: draft.minTimeZoneOverlap === "" ? null : Number(draft.minTimeZoneOverlap),
-    priority: String(draft.priority || "NORMAL")
+    priority: String(draft.priority || "NORMAL"),
+    visibilityScope: draft.visibilityScope === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM"
   };
 
   ui.jobs.isSaving = true;
