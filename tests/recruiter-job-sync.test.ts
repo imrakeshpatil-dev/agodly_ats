@@ -147,4 +147,7 @@ test("the browser refreshes shared state and versions job edits", async () => {
   assert.match(browser, /updatedAt: new Date\(\)\.toISOString\(\)/);
   assert.match(browser, /updatedAt: String\(item\.updatedAt \|\| ""\)/);
   assert.match(browser, /Only founders and TA Managers can create clients/);
+  assert.match(browser, /data-field="managerId"/);
+  assert.match(browser, /managerEmail = manager/);
+  assert.match(browser, /This controls direct-team job visibility/);
 });

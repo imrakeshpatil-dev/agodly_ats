@@ -5842,7 +5842,7 @@ function renderUserManagementPanel(user) {
             ${userSelectField("Role", "role", draft.role, USER_ROLE_OPTIONS)}
             ${userSelectField("Status", "status", draft.status, ["Active", "Inactive", "Archived"])}
             ${userTextField("Team", "team", draft.team)}
-            ${userTextField("Manager", "manager", draft.manager)}
+            ${userManagerSelectField(draft, user)}
             ${userTextField("Monthly Candidate Target", "monthlyTarget", draft.monthlyTarget, "number")}
             ${userTextField("Monthly Revenue Target (INR)", "revenueTarget", draft.revenueTarget, "number")}
           </div>
@@ -5898,6 +5898,26 @@ function userSelectField(label, field, value, options) {
       <select id="user_${field}" data-action="user-profile-field" data-field="${escapeHtml(field)}">
         ${options.map((option) => `<option value="${escapeHtml(option)}" ${String(value) === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
       </select>
+    </div>
+  `;
+}
+
+function userManagerSelectField(draft, editedUser) {
+  const eligibleManagers = state.users
+    .filter((candidate) => candidate.id !== editedUser.id)
+    .filter((candidate) => normalizeUserStatus(candidate.status) === "Active")
+    .filter((candidate) => ["CEO", "Managing Director", "Admin", "TA Manager"].includes(normalizeUserRole(candidate.role)))
+    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+  const selectedManagerId = String(draft.managerId || "");
+
+  return `
+    <div class="dialog-field">
+      <label for="user_managerId">Reports to</label>
+      <select id="user_managerId" data-action="user-profile-field" data-field="managerId">
+        <option value="">No manager assigned</option>
+        ${eligibleManagers.map((manager) => `<option value="${escapeHtml(manager.id)}" ${selectedManagerId === String(manager.id) ? "selected" : ""}>${escapeHtml(manager.name)} · ${escapeHtml(manager.role)}</option>`).join("")}
+      </select>
+      <small>Uses the manager’s account, not free text. This controls direct-team job visibility.</small>
     </div>
   `;
 }
@@ -7273,10 +7293,30 @@ function openUserEditor(userId) {
     status: normalizeUserStatus(user.status),
     team: String(user.team || "Recruiting"),
     manager: String(user.manager || ""),
+    managerId: resolveManagerIdForUser(user),
     monthlyTarget: Number(user.monthlyTarget || normalizeMonthlyTarget("", user.role)),
     revenueTarget: normalizeRevenueTarget(user.revenueTarget)
   };
   render();
+}
+
+function resolveManagerIdForUser(user) {
+  const savedManagerId = String(user?.managerId || "").trim();
+  if (savedManagerId && findById(state.users, savedManagerId)) return savedManagerId;
+
+  const managerAliases = new Set(
+    [user?.manager, user?.managerEmail]
+      .map((value) => normalizePersonKey(value))
+      .filter(Boolean)
+  );
+  if (!managerAliases.size) return "";
+
+  const matchedManager = state.users.find((candidate) =>
+    [candidate.id, candidate.name, candidate.email]
+      .map((value) => normalizePersonKey(value))
+      .some((identity) => managerAliases.has(identity))
+  );
+  return matchedManager ? String(matchedManager.id) : "";
 }
 
 function openStageMovementDialog(candidateId, nextStage) {
@@ -7506,7 +7546,14 @@ async function saveUserProfileEdits() {
   user.role = role;
   user.status = status;
   user.team = sanitizeLine(draft.team || "Recruiting", 80) || "Recruiting";
-  user.manager = sanitizeLine(draft.manager || "", 80);
+  const manager = findById(state.users, draft.managerId);
+  if (draft.managerId && (!manager || manager.id === user.id)) {
+    alert("Choose a valid manager account.");
+    return;
+  }
+  user.managerId = manager ? String(manager.id) : "";
+  user.manager = manager ? String(manager.name || "") : "";
+  user.managerEmail = manager ? normalizeEmail(manager.email) : "";
   user.monthlyTarget = normalizeMonthlyTarget(draft.monthlyTarget, role);
   user.revenueTarget = normalizeRevenueTarget(draft.revenueTarget);
   user.updatedAt = new Date().toISOString();

@@ -13,6 +13,7 @@ import {
 import { AppError } from "../lib/server/middleware/error.middleware";
 import { AIMemoryService } from "../lib/server/services/aiMemory.service";
 import { authorizationService, type AuthorizationContext } from "../lib/server/services/authorization.service";
+import { appStateStoreService } from "../lib/server/services/app-state-store.service";
 import { candidateStoreService } from "../lib/server/services/candidate-store.service";
 import { searchCandidates, summarizeCandidate } from "../lib/server/services/aiTools";
 import type { AppStateSnapshot, AppStateStorePayload } from "../lib/server/types/app-state";
@@ -79,6 +80,39 @@ test("job visibility supports organisation-wide sharing and a manager's direct t
   assert.equal(authorizationService.canViewJob(recruiterB, organisationJob), true);
   assert.equal(authorizationService.canViewJob(directReport, unrelatedManagerJob), false);
   assert.equal(authorizationService.canEditJob(directReport, directTeamJob), false);
+});
+
+test("a saved manager ID grants a recruiter access to their manager's direct-team jobs", async () => {
+  const originalGetUsers = appStateStoreService.getUsers;
+  appStateStoreService.getUsers = async () => [
+    { id: "usr-manager", name: "Sanjana Hanagal", email: "sanjana@agodly.com", role: "TA Manager" },
+    {
+      id: "usr-runa",
+      name: "Runa Das",
+      email: "runa.d@agodly.com",
+      role: "Recruiter",
+      managerId: "usr-manager",
+      manager: "Sanjana Hanagal",
+      managerEmail: "sanjana@agodly.com"
+    }
+  ];
+
+  try {
+    const runa = await authorizationService.createContext({
+      id: "usr-runa",
+      name: "Runa Das",
+      email: "runa.d@agodly.com",
+      role: "Recruiter"
+    });
+    assert.equal(authorizationService.canViewJob(runa, {
+      id: "job-manager-team",
+      visibilityScope: "DIRECT_TEAM",
+      ownerUserId: "usr-manager",
+      assignedRecruiterId: "usr-manager"
+    }), true);
+  } finally {
+    appStateStoreService.getUsers = originalGetUsers;
+  }
 });
 
 test("bootstrap state cannot reveal another recruiter's candidates, jobs, clients, interviews, exports, or bulk history", () => {
