@@ -107,3 +107,26 @@ test("job migration is additive and the interface exposes structured controls", 
   assert.match(browser, /Asia\/Kolkata/);
   assert.match(browser, /data-action="build-insight-candidate-pool"/);
 });
+
+test("jobs list starts with all statuses and makes empty filters recoverable", async () => {
+  const browser = await read("app.js");
+
+  assert.match(browser, /statusFilter: "all"/);
+  assert.match(browser, /Showing \$\{jobCountLabel\}/);
+  assert.match(browser, /data-action="clear-job-filters"/);
+  assert.match(browser, /No jobs match these filters/);
+  assert.match(browser, /Show all jobs/);
+});
+
+test("job creation guides JD extraction, review, routing, and publish readiness", async () => {
+  const browser = await read("app.js");
+
+  assert.match(browser, /createStep: 1/);
+  assert.match(browser, /Paste JD", "Review details", "Assign & publish/);
+  assert.match(browser, /renderJobExtractionReview/);
+  assert.match(browser, /Extraction confidence/);
+  assert.match(browser, /data-action="job-assigned-recruiter"/);
+  assert.match(browser, /renderJobPublishReadiness/);
+  assert.match(browser, /Complete these essentials before publishing/);
+  assert.match(browser, /assignedRecruiterId/);
+});

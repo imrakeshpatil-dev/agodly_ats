@@ -29,6 +29,7 @@ const API_ROUTES = {
   listCandidates: "/api/candidates",
   createCandidate: "/api/candidates",
   getCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}`,
+  candidateDecisionTimeline: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/decision-timeline`,
   candidateResume: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/resume`,
   listDuplicates: "/api/candidates/duplicates",
   mergeDuplicate: "/api/candidates/merge",
@@ -360,7 +361,7 @@ const FORM_SCHEMAS = {
     },
     { name: "status", label: "Status", type: "select", options: ["Active", "Inactive"], required: true },
     { name: "team", label: "Team", type: "text", required: false },
-    { name: "manager", label: "Manager", type: "text", required: false },
+    { name: "managerId", label: "Reports to", type: "manager-select", required: false },
     { name: "monthlyTarget", label: "Monthly Candidate Target", type: "number", required: false },
     { name: "revenueTarget", label: "Monthly Revenue Target (INR)", type: "number", required: false }
   ]
@@ -410,7 +411,9 @@ const ui = {
     bulkValue: "",
     savedViews: [],
     noteDraft: "",
-    undoStack: []
+    undoStack: [],
+    decisionTimelineByCandidateId: {},
+    decisionTimelineLoading: {}
   },
   candidatePool: {
     skill: "all",
@@ -422,8 +425,9 @@ const ui = {
   },
   jobs: {
     mode: "list",
+    createStep: 1,
     search: "",
-    statusFilter: "active",
+    statusFilter: "all",
     clientFilter: "all",
     draft: createJobDraft(),
     insights: null,
@@ -776,6 +780,7 @@ function onSectionClick(event) {
     ui.candidates.workQueue = "all";
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     render();
     focusCandidateSidePanel();
     return;
@@ -785,6 +790,15 @@ function onSectionClick(event) {
     ui.pipelineFilter = "all";
     ui.pipelineRecruiterFilter = "all";
     ui.pipelineJobFilter = "all";
+    renderSection();
+    return;
+  }
+
+  if (action === "clear-job-filters") {
+    ui.search = "";
+    ui.jobs.search = "";
+    ui.jobs.statusFilter = "all";
+    ui.jobs.clientFilter = "all";
     renderSection();
     return;
   }
@@ -991,6 +1005,11 @@ function onSectionClick(event) {
     return;
   }
 
+  if (action === "reload-candidate-decision-timeline") {
+    void loadCandidateDecisionTimeline(actionNode.dataset.candidateId || ui.candidates.selectedId, true);
+    return;
+  }
+
   if (action === "email-candidate") {
     openCandidateEmailTemplate();
     return;
@@ -1007,6 +1026,7 @@ function onSectionClick(event) {
     if (!candidate) return;
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     renderSection();
     focusCandidateSidePanel();
     return;
@@ -1020,6 +1040,7 @@ function onSectionClick(event) {
     ui.candidates.view = isCandidateDeleted(candidate) ? "deleted" : "active";
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     ui.candidates.page = 1;
     ui.candidates.inFlightQueryKey = "";
     ui.candidates.lastQueryKey = "";
@@ -1034,6 +1055,7 @@ function onSectionClick(event) {
     if (!candidate) return;
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     renderSection();
     focusCandidateSidePanel();
     return;
@@ -1158,6 +1180,7 @@ function onSectionClick(event) {
 
   if (action === "create-job") {
     ui.jobs.mode = "create";
+    ui.jobs.createStep = 1;
     ui.jobs.draft = createJobDraft();
     renderSection();
     return;
@@ -1165,6 +1188,7 @@ function onSectionClick(event) {
 
   if (action === "back-to-jobs" || action === "cancel-job-edit") {
     ui.jobs.mode = "list";
+    ui.jobs.createStep = 1;
     ui.jobs.draft = createJobDraft();
     renderSection();
     return;
@@ -1172,6 +1196,36 @@ function onSectionClick(event) {
 
   if (action === "autofill-job-from-jd") {
     ui.jobs.draft = autofillJobFromJd(ui.jobs.draft);
+    ui.jobs.createStep = 2;
+    renderSection();
+    return;
+  }
+
+  if (action === "job-create-next") {
+    const step = Number(actionNode.dataset.step || ui.jobs.createStep || 1);
+    if (step === 1) {
+      const jdText = String(ui.jobs.draft.jdText || "").trim();
+      if (!jdText) {
+        alert("Paste a job description first, or choose Continue manually.");
+        return;
+      }
+      ui.jobs.draft = autofillJobFromJd(ui.jobs.draft);
+      ui.jobs.createStep = 2;
+    } else if (step === 2) {
+      ui.jobs.createStep = 3;
+    }
+    renderSection();
+    return;
+  }
+
+  if (action === "job-create-back") {
+    ui.jobs.createStep = Math.max(1, Number(ui.jobs.createStep || 1) - 1);
+    renderSection();
+    return;
+  }
+
+  if (action === "job-create-manual") {
+    ui.jobs.createStep = 2;
     renderSection();
     return;
   }
@@ -1215,6 +1269,7 @@ function onSectionClick(event) {
     if (!job) return;
     ui.jobs.draft = createJobDraft(job);
     ui.jobs.mode = "create";
+    ui.jobs.createStep = 2;
     renderSection();
     return;
   }
@@ -1230,8 +1285,18 @@ function onSectionClick(event) {
     ui.activeSection = "candidates";
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     render();
     focusCandidateSidePanel();
+    return;
+  }
+
+  if (action === "record-job-shortlist-decision") {
+    void recordJobShortlistDecision({
+      candidateId: actionNode.dataset.candidateId || "",
+      jobId: actionNode.dataset.jobId || "",
+      decision: actionNode.dataset.decision || ""
+    });
     return;
   }
 
@@ -1506,6 +1571,11 @@ function onSectionChange(event) {
     return;
   }
 
+  if (event.target.matches("[data-action='job-assigned-recruiter']")) {
+    ui.jobs.draft.assignedRecruiterId = event.target.value;
+    return;
+  }
+
   if (event.target.matches("[data-action='job-primary-timezone']")) {
     ui.jobs.draft.primaryTimeZone = event.target.value;
     return;
@@ -1747,6 +1817,7 @@ function onSectionKeydown(event) {
     if (!candidate) return;
     ui.candidates.selectedId = candidate.id;
     ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+    void loadCandidateDecisionTimeline(candidate.id);
     renderSection();
     focusCandidateSidePanel();
     return;
@@ -2044,6 +2115,7 @@ function openCandidateFromNotification(candidateId) {
   ui.candidates.view = isCandidateDeleted(candidate) ? "deleted" : "active";
   ui.candidates.selectedId = candidate.id;
   ui.candidates.editDraft = candidateDraftFromRecord(candidate);
+  void loadCandidateDecisionTimeline(candidate.id);
   ui.notifications.open = false;
   render();
   focusCandidateSidePanel();
@@ -2076,6 +2148,7 @@ async function submitFounderReviewRating(candidateId, reviewId) {
 
     const updated = mapApiCandidateToLocal(payload.candidate);
     upsertCandidateInState(updated);
+    invalidateCandidateDecisionTimeline(updated.id);
     delete ui.notifications.drafts[reviewId];
     recordActivity("candidate", `Founder rating completed for ${updated.name}: ${rating}/10`, {
       action: "candidate.founder-rating",
@@ -4235,6 +4308,14 @@ function renderJobsSection() {
 
 function renderJobsListSection() {
   const jobs = filteredJobs({ includeJobsFilters: true });
+  const jobsBeforeListFilters = filteredJobs();
+  const hasLocalJobListFilters = Boolean(
+    String(ui.jobs.search || "").trim() ||
+    String(ui.jobs.statusFilter || "all").toLowerCase() !== "all" ||
+    String(ui.jobs.clientFilter || "all") !== "all"
+  );
+  const hasJobListFilters = hasLocalJobListFilters || Boolean(String(ui.search || "").trim());
+  const jobCountLabel = `${jobs.length} of ${jobsBeforeListFilters.length} job${jobsBeforeListFilters.length === 1 ? "" : "s"}`;
   const canDeletePermanently = canCurrentUserAccessFounderWorkspace();
   if (!ui.jobs.insightsLoading && !Array.isArray(ui.jobs.insights) && !ui.jobs.insightsError) {
     queueMicrotask(() => void loadJobInsights());
@@ -4247,9 +4328,12 @@ function renderJobsListSection() {
       <div class="jobs-header">
         <div>
           <h2 class="panel-title">Jobs</h2>
-          <p class="panel-subtitle">Manage your job postings (${state.jobs.length} total)</p>
+          <p class="panel-subtitle">Showing ${jobCountLabel}${hasJobListFilters ? " after filters" : ""}.</p>
         </div>
-        <button class="tool-btn jobs-create-btn" type="button" data-action="create-job">+ Create Job</button>
+        <div class="table-actions">
+          ${hasJobListFilters ? '<button class="tool-btn" type="button" data-action="clear-job-filters">Clear filters</button>' : ""}
+          <button class="tool-btn jobs-create-btn" type="button" data-action="create-job">+ Create Job</button>
+        </div>
       </div>
 
       <div class="jobs-filters">
@@ -4346,9 +4430,12 @@ function renderJobsListSection() {
       `
           : `
         <div class="jobs-empty">
-          <h3>No jobs found</h3>
-          <p class="panel-subtitle">Try adjusting your filters</p>
-          <button class="tool-btn jobs-create-btn" type="button" data-action="create-job">Create Job</button>
+          <h3>${hasJobListFilters ? "No jobs match these filters" : "No jobs yet"}</h3>
+          <p class="panel-subtitle">${hasJobListFilters ? jobsBeforeListFilters.length ? `${jobsBeforeListFilters.length} accessible job${jobsBeforeListFilters.length === 1 ? " is" : "s are"} currently hidden by the selected filters.` : "Clear filters or change your search to see available jobs." : "Create a job to start matching candidates."}</p>
+          <div class="table-actions jobs-empty-actions">
+            ${hasJobListFilters ? '<button class="tool-btn" type="button" data-action="clear-job-filters">Show all jobs</button>' : ""}
+            <button class="tool-btn jobs-create-btn" type="button" data-action="create-job">Create Job</button>
+          </div>
         </div>
       `
       }
@@ -4416,21 +4503,165 @@ function renderJobAiShortlistPanel() {
       </div>
       ${shortlist?.error ? `<p class="form-error">${escapeHtml(shortlist.error)}</p>` : ""}
       ${shortlist?.explanation ? `<p class="panel-subtitle">${escapeHtml(shortlist.explanation)}</p>` : ""}
-      <div class="myllm-card-grid">
-        ${results.length ? results.map((result) => {
-          const candidateId = String(result.id || result.candidateId || "");
-          const skills = Array.isArray(result.matchedSkills) ? result.matchedSkills.slice(0, 6).join(", ") : "";
-          return `<article class="confidence-card">
-            <p><strong>${escapeHtml(result.name || "Candidate")}</strong> ${result.matchPercentage != null ? `· ${Math.round(Number(result.matchPercentage))}% match` : ""}</p>
-            <p class="panel-subtitle">${escapeHtml([result.currentRole, result.currentCompany, result.location].filter(Boolean).join(" · ") || "Profile details")}</p>
-            ${skills ? `<p class="confidence-row">Matched skills: ${escapeHtml(skills)}</p>` : ""}
-            ${result.confidenceExplanation ? `<p class="confidence-note">${escapeHtml(result.confidenceExplanation)}</p>` : ""}
-            ${candidateId ? `<button class="tool-btn" type="button" data-action="open-job-shortlist-candidate" data-candidate-id="${escapeHtml(candidateId)}">Review candidate</button>` : ""}
-          </article>`;
-        }).join("") : `<p class="empty">${ui.jobs.aiShortlistLoading ? "Finding the strongest matches…" : "No suitable candidates were found for this requirement."}</p>`}
+      <div class="job-shortlist-grid">
+        ${results.length ? results.map((result) => renderJobShortlistCandidate(result, job)).join("") : `<p class="empty">${ui.jobs.aiShortlistLoading ? "Finding the strongest matches…" : "No suitable candidates were found for this requirement."}</p>`}
       </div>
     </section>
   `;
+}
+
+function renderJobShortlistCandidate(result, job) {
+  const candidateId = String(result.id || result.candidateId || "");
+  const savedCandidate = candidateId ? findCandidateByIdAnywhere(candidateId) : null;
+  const candidate = savedCandidate || result;
+  const score = Math.max(0, Math.min(100, Number(result.matchPercentage || 0)));
+  const matchedMustHaves = uniqueStringsLocal(
+    Array.isArray(result.matchedMustHaves) && result.matchedMustHaves.length ? result.matchedMustHaves : result.matchedSkills || []
+  ).slice(0, 12);
+  const missingMustHaves = uniqueStringsLocal(result.missingMustHaves || []).slice(0, 12);
+  const experience = getShortlistExperienceFit(result, candidate);
+  const locationFit = String(result.locationFit || getShortlistLocationFit(candidate, job));
+  const availability = String(result.availability || getShortlistAvailability(candidate));
+  const breakdown = getShortlistScoreBreakdown(result.scoreBreakdown);
+  const history = getJobShortlistDecisionHistory(candidate, job.id);
+  const lastDecision = history[0];
+  const canDecide = Boolean(candidateId && savedCandidate && canCurrentUserWriteRecords());
+
+  return `
+    <article class="confidence-card job-shortlist-card">
+      <div class="job-shortlist-head">
+        <div>
+          <p><strong>${escapeHtml(candidate.name || result.name || "Candidate")}</strong> ${confidenceBadge(String(result.confidenceLabel || (score >= 80 ? "High" : score >= 55 ? "Medium" : "Low")))}</p>
+          <p class="panel-subtitle">${escapeHtml([candidate.currentRole || result.currentRole, candidate.currentCompany || result.currentCompany, candidate.location || result.location].filter(Boolean).join(" · ") || "Profile details")}</p>
+        </div>
+        <strong class="job-shortlist-score">${Math.round(score)}<small>/100</small></strong>
+      </div>
+
+      <div class="job-shortlist-evidence-grid">
+        ${renderShortlistEvidenceBlock("Must-have skills", matchedMustHaves, "matched", "Matched")}
+        ${renderShortlistEvidenceBlock("Missing must-haves", missingMustHaves, "missing", "None missing")}
+        <div class="job-shortlist-evidence"><strong>Experience fit</strong><span>${escapeHtml(experience)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Location fit</strong><span>${escapeHtml(locationFit)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Availability</strong><span>${escapeHtml(availability)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Score rationale</strong><span>${escapeHtml(`Terms ${breakdown.terms}/65 · Skills ${breakdown.skills}/25 · Experience ${breakdown.experience}/10`)}</span></div>
+      </div>
+
+      ${result.confidenceExplanation ? `<p class="confidence-note">${escapeHtml(result.confidenceExplanation)}</p>` : ""}
+      <div class="job-shortlist-decision">
+        <strong>Recruiter decision</strong>
+        ${lastDecision ? `<span>${escapeHtml(lastDecision.decision)} · ${escapeHtml(lastDecision.actor || "Recruiter")} · ${escapeHtml(formatShortDate(lastDecision.createdAt || ""))}${lastDecision.note ? ` · ${escapeHtml(lastDecision.note)}` : ""}</span>` : "<span>No decision recorded yet.</span>"}
+        ${history.length > 1 ? `<small>${history.length - 1} earlier decision${history.length === 2 ? "" : "s"} recorded</small>` : ""}
+      </div>
+      <div class="table-actions job-shortlist-actions">
+        ${candidateId ? `<button class="tool-btn" type="button" data-action="open-job-shortlist-candidate" data-candidate-id="${escapeHtml(candidateId)}">Review candidate</button>` : ""}
+        <button class="tool-btn primary" type="button" data-action="record-job-shortlist-decision" data-candidate-id="${escapeHtml(candidateId)}" data-job-id="${escapeHtml(job.id)}" data-decision="Shortlisted" ${canDecide ? "" : "disabled"}>Shortlist</button>
+        <button class="tool-btn" type="button" data-action="record-job-shortlist-decision" data-candidate-id="${escapeHtml(candidateId)}" data-job-id="${escapeHtml(job.id)}" data-decision="Hold" ${canDecide ? "" : "disabled"}>Hold</button>
+        <button class="tool-btn danger" type="button" data-action="record-job-shortlist-decision" data-candidate-id="${escapeHtml(candidateId)}" data-job-id="${escapeHtml(job.id)}" data-decision="Not a fit" ${canDecide ? "" : "disabled"}>Not a fit</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderShortlistEvidenceBlock(label, values, tone, emptyLabel) {
+  return `<div class="job-shortlist-evidence"><strong>${escapeHtml(label)}</strong><div class="job-shortlist-tags ${escapeHtml(tone)}">${values.length ? values.map((value) => `<span>${escapeHtml(value)}</span>`).join("") : `<span class="is-empty">${escapeHtml(emptyLabel)}</span>`}</div></div>`;
+}
+
+function getShortlistExperienceFit(result, candidate) {
+  const candidateExperience = candidate?.experienceYears == null || candidate.experienceYears === "" ? null : Number(candidate.experienceYears);
+  const requiredExperience = result.minExperienceRequired == null || result.minExperienceRequired === "" ? null : Number(result.minExperienceRequired);
+  const gap = Math.max(0, Number(result.experienceGapYears || 0));
+  if (requiredExperience == null) return candidateExperience == null ? "Not specified" : `${candidateExperience} years recorded`;
+  if (candidateExperience == null) return `${requiredExperience}+ years required · candidate experience not recorded`;
+  return gap > 0 ? `${candidateExperience} years · short by ${gap} year${gap === 1 ? "" : "s"}` : `${candidateExperience} years · meets ${requiredExperience}+ year requirement`;
+}
+
+function getShortlistLocationFit(candidate, job) {
+  if (normalizeWorkModeLabel(job?.workMode) === "Remote") return "Remote-compatible role";
+  const candidateLocation = normalizePersonKey(candidate?.location);
+  const jobLocations = Array.isArray(job?.locations) ? job.locations : splitMultiDelimiter(job?.location || "");
+  if (!jobLocations.length) return "Job location not specified";
+  if (!candidateLocation) return "Candidate location not recorded";
+  return jobLocations.some((location) => candidateLocation.includes(normalizePersonKey(location)) || normalizePersonKey(location).includes(candidateLocation))
+    ? "Matches job location"
+    : "Different location — confirm mobility";
+}
+
+function getShortlistAvailability(candidate) {
+  const parsedData = candidate?.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? candidate.parsedData
+    : {};
+  const tracking = parsedData.tracking && typeof parsedData.tracking === "object" ? parsedData.tracking : {};
+  const explicit = [parsedData.availability, parsedData.noticePeriod, tracking.availability, tracking.noticePeriod]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+  if (explicit) return explicit;
+  const status = String(candidate?.stage || tracking.trackingStatus || "").trim();
+  if (/^(on hold|dropped|rejected)$/i.test(status)) return `Not active — ${status}`;
+  if (status) return `Active in ATS — ${status}`;
+  return "Availability not recorded";
+}
+
+function getShortlistScoreBreakdown(scoreBreakdown) {
+  const points = scoreBreakdown?.weightedPoints && typeof scoreBreakdown.weightedPoints === "object" ? scoreBreakdown.weightedPoints : {};
+  return {
+    terms: roundTo(points.terms, 1),
+    skills: roundTo(points.skills, 1),
+    experience: roundTo(points.experience, 1)
+  };
+}
+
+function getJobShortlistDecisionHistory(candidate, jobId) {
+  const parsedData = candidate?.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? candidate.parsedData
+    : {};
+  const entries = Array.isArray(parsedData.shortlistDecisions) ? parsedData.shortlistDecisions : [];
+  return entries
+    .filter((entry) => entry && String(entry.jobId || "") === String(jobId || ""))
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+async function recordJobShortlistDecision({ candidateId, jobId, decision }) {
+  if (!canCurrentUserWriteRecords()) {
+    alert("Your role can review this shortlist but cannot record a recruiter decision.");
+    return;
+  }
+  const candidate = findCandidateByIdAnywhere(candidateId);
+  const job = findById(state.jobs, jobId);
+  if (!candidate || !job || !decision) return;
+  const note = prompt(`${decision} ${candidate.name} for ${job.title}. Add a note${decision === "Not a fit" ? " (recommended)" : " (optional)"}:`);
+  if (note === null) return;
+  const actor = getCurrentUser();
+  const createdAt = new Date().toISOString();
+  const parsedData = candidate.parsedData && typeof candidate.parsedData === "object" && !Array.isArray(candidate.parsedData)
+    ? { ...candidate.parsedData }
+    : {};
+  const decisionEntry = {
+    id: uid("shortlist-decision"),
+    jobId: job.id,
+    jobTitle: job.title,
+    decision,
+    note: String(note || "").trim().slice(0, 500),
+    actor: actor?.name || actor?.email || "Recruiter",
+    actorUserId: actor?.id || "",
+    createdAt
+  };
+  const existingDecisions = Array.isArray(parsedData.shortlistDecisions) ? parsedData.shortlistDecisions : [];
+  parsedData.shortlistDecisions = [decisionEntry, ...existingDecisions].slice(0, 100);
+  parsedData.timeline = [{
+    id: uid("evt"),
+    eventType: "Shortlist decision",
+    candidateId: candidate.id,
+    jobId: job.id,
+    timestamp: createdAt,
+    user: decisionEntry.actor,
+    remarks: `${decision}${decisionEntry.note ? `: ${decisionEntry.note}` : ""}`
+  }, ...getCandidateTimeline(candidate)].slice(0, 200);
+  try {
+    await updateCandidateFields(candidate.id, { parsedData }, `Shortlist decision recorded: ${decision}`);
+    renderSection();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "Could not record the shortlist decision.");
+  }
 }
 
 async function runJobAiShortlist(jobId) {
@@ -4460,6 +4691,8 @@ async function runJobAiShortlist(jobId) {
       body: JSON.stringify({
         jobDescription,
         keywords: Array.isArray(job.requiredSkills) ? job.requiredSkills.join(", ") : undefined,
+        jobLocation: Array.isArray(job.locations) ? job.locations.join(", ") : job.location || undefined,
+        workMode: job.workMode || undefined,
         topK: 15
       })
     });
@@ -4504,6 +4737,7 @@ function renderJobAuditPanel() {
 
 function renderCreateJobSection() {
   const draft = ui.jobs.draft;
+  const step = Math.min(3, Math.max(1, Number(ui.jobs.createStep || 1)));
   const selectedLocations = Array.isArray(draft.locations) ? draft.locations : [];
   const jobType = normalizeJobType(draft.jobType);
   const role = normalizeUserRole(getCurrentUser()?.role);
@@ -4516,19 +4750,20 @@ function renderCreateJobSection() {
         <button class="tool-btn" type="button" data-action="back-to-jobs">&larr;</button>
         <div>
           <h2 class="panel-title">${draft.id ? "Edit Job" : "Create Job"}</h2>
-          <p class="panel-subtitle">Start with the essentials. Publishing validates the full requirement; drafts can remain incomplete.</p>
+          <p class="panel-subtitle">${draft.id ? "Review the requirement, then update routing and publish readiness." : "Create a structured requirement from a JD, then route it to the right recruiter."}</p>
         </div>
       </div>
+      ${renderJobCreationProgress(step)}
     </section>
 
-    <details class="panel jobs-jd-assist" ${draft.jdText ? "open" : ""}>
-      <summary><span><strong>Paste Job Description</strong><small>Optional · auto-fill title, experience, skills, locations and work mode</small></span></summary>
+    ${step === 1 ? `<section class="panel jobs-jd-assist">
       <div class="jobs-subhead">
         <div>
-          <h3 class="jobs-block-title">Job Description</h3>
-          <p class="panel-subtitle">Paste the full JD to enable AI-powered candidate matching and auto-fill</p>
+          <p class="jobs-eyebrow">Step 1 · Source</p>
+          <h3 class="jobs-block-title">Paste the job description</h3>
+          <p class="panel-subtitle">We will extract the role, skills, experience, locations, work mode, and engagement type for you to review.</p>
         </div>
-        <button class="tool-btn" type="button" data-action="autofill-job-from-jd">Auto-Fill from JD</button>
+        <button class="tool-btn" type="button" data-action="autofill-job-from-jd">Extract &amp; review</button>
       </div>
       <textarea
         class="job-jd-textarea"
@@ -4536,33 +4771,18 @@ function renderCreateJobSection() {
         rows="10"
         placeholder="Paste your job description here..."
       >${escapeHtml(draft.jdText || "")}</textarea>
-      <p class="panel-subtitle">Paste a JD and click "Auto-Fill from JD" to extract title, skills, experience, and details.</p>
-    </details>
+      <p class="panel-subtitle">Nothing is published from this text. You will review every extracted detail before assignment.</p>
+    </section>` : ""}
 
-    <section class="panel jobs-essential-panel">
+    ${step === 2 ? `<section class="panel jobs-essential-panel">
       <p class="jobs-eyebrow">Quick create</p>
-      <h3 class="jobs-block-title">Essential information</h3>
+      <h3 class="jobs-block-title">Review extracted details</h3>
+      ${renderJobExtractionReview(draft)}
       <div class="job-form-grid">
         <label class="dialog-field">
           <span>Job Title *</span>
           <input data-action="job-title" type="text" value="${escapeHtml(draft.title || "")}" placeholder="e.g. Senior React Developer" />
         </label>
-
-        <div class="dialog-field">
-          <div class="jobs-inline-head">
-            <span>Client</span>
-            ${canCreateClient ? '<button class="jobs-link-btn" type="button" data-action="create-client-inline">Create New Client</button>' : ""}
-          </div>
-          <select data-action="job-client">
-            <option value="">None</option>
-            ${state.clients
-              .map(
-                (client) =>
-                  `<option value="${escapeHtml(client.id)}" ${draft.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`
-              )
-              .join("")}
-          </select>
-        </div>
 
         <label class="dialog-field">
           <span>Work Mode</span>
@@ -4590,17 +4810,6 @@ function renderCreateJobSection() {
         <label class="dialog-field">
           <span>Openings</span>
           <input data-action="job-openings" min="1" step="1" type="number" value="${escapeHtml(String(draft.openings || 1))}" />
-        </label>
-
-        <label class="dialog-field">
-          <span>Job visibility</span>
-          ${canSetOrganizationVisibility ? `
-            <select data-action="job-visibility-scope">
-              <option value="DIRECT_TEAM" ${draft.visibilityScope === "DIRECT_TEAM" ? "selected" : ""}>My direct recruiting team</option>
-              <option value="ORGANIZATION" ${draft.visibilityScope === "ORGANIZATION" ? "selected" : ""}>Everyone in the organisation</option>
-            </select>
-            <small>Direct team includes recruiters who report to you.</small>
-          ` : `<input value="My direct recruiting team" disabled /><small>Only TA Managers can share jobs with the whole organisation.</small>`}
         </label>
       </div>
     </section>
@@ -4701,14 +4910,165 @@ function renderCreateJobSection() {
       </div>
     </details>
 
-    <section class="jobs-footer-actions">
-      <button class="tool-btn" type="button" data-action="cancel-job-edit">Cancel</button>
-      <div class="jobs-footer-right">
-        ${draft.id ? "" : `<button class="tool-btn" type="button" data-action="save-job-draft" ${ui.jobs.isSaving ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : "Save as Draft"}</button>`}
-        <button class="tool-btn jobs-publish-btn" type="button" data-action="create-job-publish" ${ui.jobs.isSaving ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : draft.id ? "Save Changes" : "Create & Publish"}</button>
+    </section>` : ""}
+
+    ${step === 3 ? renderJobAssignmentStep(draft, { canCreateClient, canSetOrganizationVisibility }) : ""}
+
+    ${renderJobCreateFooter(step, draft)}
+  `;
+}
+
+function renderJobCreationProgress(step) {
+  const steps = ["Paste JD", "Review details", "Assign & publish"];
+  return `
+    <ol class="job-create-progress" aria-label="Job creation progress">
+      ${steps.map((label, index) => {
+        const position = index + 1;
+        const state = position === step ? "is-current" : position < step ? "is-complete" : "";
+        return `<li class="${state}"><span>${position}</span>${escapeHtml(label)}</li>`;
+      }).join("")}
+    </ol>
+  `;
+}
+
+function renderJobExtractionReview(draft) {
+  const review = getJobExtractionReview(draft);
+  if (!review.hasJd) {
+    return `<div class="job-extraction-review is-empty"><strong>Manual review</strong><span>No JD was supplied, so these details are being entered manually.</span></div>`;
+  }
+
+  return `
+    <div class="job-extraction-review">
+      <div><strong>Extraction confidence: ${review.score}% · ${review.label}</strong><span>${review.summary}</span></div>
+      <div class="job-extraction-signals">${review.signals.map((signal) => `<span>${escapeHtml(signal)}</span>`).join("") || "<span>No details detected yet</span>"}</div>
+    </div>
+  `;
+}
+
+function getJobExtractionReview(draft) {
+  const jdText = String(draft?.jdText || "").trim();
+  if (!jdText) return { hasJd: false, score: 0, label: "Manual", summary: "", signals: [] };
+
+  const lower = jdText.toLowerCase();
+  const title = inferJobTitleFromJd(jdText);
+  const experience = extractExperienceRangeFromText(jdText);
+  const analysis = analyzeJdInput(jdText, "");
+  const skills = analysis.coreSkills.length ? analysis.coreSkills : analysis.requiredTerms;
+  const locations = INDIA_CITY_OPTIONS.filter((city) => lower.includes(city.toLowerCase()));
+  const signals = [];
+  if (title) signals.push(`Role: ${title}`);
+  if (skills.length) signals.push(`${skills.length} skills`);
+  if (experience.min != null) signals.push(`Experience: ${experience.min}${experience.max != null ? `–${experience.max}` : "+"} years`);
+  if (locations.length) signals.push(`Location: ${locations.join(", ")}`);
+  if (/\bremote\b|\bhybrid\b|\bon-?site\b/.test(lower)) signals.push("Work arrangement");
+  if (/\bc2c\b|\bc2h\b|contract|full[- ]time|permanent/.test(lower)) signals.push("Engagement type");
+
+  const score = Math.min(95, 26 + signals.length * 12 + (jdText.length >= 400 ? 8 : 0));
+  const label = score >= 80 ? "High" : score >= 58 ? "Medium" : "Low";
+  return {
+    hasJd: true,
+    score,
+    label,
+    signals,
+    summary: "Confirm these extracted details before routing the job. You can edit every field below."
+  };
+}
+
+function renderJobAssignmentStep(draft, { canCreateClient, canSetOrganizationVisibility }) {
+  const assignableRecruiters = getAssignableRecruitersForJob();
+  const assignedRecruiterId = getDraftAssignedRecruiterId(draft);
+  const readiness = getJobPublishReadiness(draft, assignedRecruiterId);
+
+  return `
+    <section class="panel jobs-assignment-panel">
+      <p class="jobs-eyebrow">Step 3 · Route &amp; publish</p>
+      <h3 class="jobs-block-title">Assign the hiring work</h3>
+      <p class="panel-subtitle">Choose who owns the search and who can access this job. This can be changed later with a full audit trail.</p>
+      <div class="job-form-grid">
+        <div class="dialog-field">
+          <div class="jobs-inline-head">
+            <span>Client *</span>
+            ${canCreateClient ? '<button class="jobs-link-btn" type="button" data-action="create-client-inline">Create New Client</button>' : ""}
+          </div>
+          <select data-action="job-client">
+            <option value="">Select client</option>
+            ${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${draft.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
+          </select>
+        </div>
+        <label class="dialog-field">
+          <span>Assigned recruiter *</span>
+          <select data-action="job-assigned-recruiter">
+            <option value="">Select recruiter</option>
+            ${assignableRecruiters.map((user) => `<option value="${escapeHtml(user.id)}" ${assignedRecruiterId === String(user.id) ? "selected" : ""}>${escapeHtml(user.name)} · ${escapeHtml(user.role)}</option>`).join("")}
+          </select>
+          <small>The assigned recruiter is accountable for progressing this requirement.</small>
+        </label>
+        <label class="dialog-field">
+          <span>Job visibility *</span>
+          ${canSetOrganizationVisibility ? `
+            <select data-action="job-visibility-scope">
+              <option value="DIRECT_TEAM" ${draft.visibilityScope === "DIRECT_TEAM" ? "selected" : ""}>My direct recruiting team</option>
+              <option value="ORGANIZATION" ${draft.visibilityScope === "ORGANIZATION" ? "selected" : ""}>Everyone in the organisation</option>
+            </select>
+            <small>Direct team includes recruiters who report to the manager who created this job.</small>
+          ` : `<input value="My direct recruiting team" disabled /><small>Only TA Managers can share jobs with the whole organisation.</small>`}
+        </label>
       </div>
     </section>
+    ${renderJobPublishReadiness(readiness)}
   `;
+}
+
+function getAssignableRecruitersForJob() {
+  const currentUser = getCurrentUser();
+  const eligible = state.users.filter((user) =>
+    normalizeUserStatus(user.status) === "Active" && ["Recruiter", "TA Manager"].includes(normalizeUserRole(user.role))
+  );
+  if (currentUser && !eligible.some((user) => String(user.id) === String(currentUser.id))) {
+    eligible.unshift({ ...currentUser, status: "Active" });
+  }
+  return eligible.sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+}
+
+function getDraftAssignedRecruiterId(draft) {
+  const currentUser = getCurrentUser();
+  return String(draft?.assignedRecruiterId || currentUser?.id || "");
+}
+
+function getJobPublishReadiness(draft, assignedRecruiterId = getDraftAssignedRecruiterId(draft)) {
+  const missing = [];
+  if (!String(draft?.title || "").trim()) missing.push("Job title");
+  if (!String(draft?.clientId || "").trim()) missing.push("Client");
+  if (!String(assignedRecruiterId || "").trim()) missing.push("Recruiter owner");
+  if (!(draft?.requiredSkills || []).length) missing.push("At least one required skill");
+  if (!String(draft?.primaryTimeZone || "").trim()) missing.push("Primary time zone");
+  if (normalizeWorkModeLabel(draft?.workMode) !== "Remote" && !(draft?.locations || []).length) missing.push("At least one location");
+  const recommendations = !String(draft?.jdText || "").trim() ? ["Add a JD to improve matching and shortlist quality."] : [];
+  return { ready: missing.length === 0, missing, recommendations };
+}
+
+function renderJobPublishReadiness(readiness) {
+  return `
+    <section class="panel job-publish-readiness ${readiness.ready ? "is-ready" : "has-gaps"}">
+      <div>
+        <p class="jobs-eyebrow">Publish readiness</p>
+        <h3 class="jobs-block-title">${readiness.ready ? "Ready to publish" : "Complete the essentials before publishing"}</h3>
+      </div>
+      ${readiness.missing.length ? `<ul>${readiness.missing.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      ${readiness.recommendations.length ? `<p class="panel-subtitle">${escapeHtml(readiness.recommendations.join(" "))}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderJobCreateFooter(step, draft) {
+  const readiness = getJobPublishReadiness(draft);
+  if (step === 1) {
+    return `<section class="jobs-footer-actions"><button class="tool-btn" type="button" data-action="cancel-job-edit">Cancel</button><div class="jobs-footer-right"><button class="tool-btn" type="button" data-action="job-create-manual">Continue manually</button><button class="tool-btn jobs-publish-btn" type="button" data-action="job-create-next" data-step="1">Review extracted details</button></div></section>`;
+  }
+  if (step === 2) {
+    return `<section class="jobs-footer-actions"><button class="tool-btn" type="button" data-action="job-create-back">Back</button><div class="jobs-footer-right"><button class="tool-btn jobs-publish-btn" type="button" data-action="job-create-next" data-step="2">Continue to assignment</button></div></section>`;
+  }
+  return `<section class="jobs-footer-actions"><button class="tool-btn" type="button" data-action="job-create-back">Back</button><div class="jobs-footer-right">${draft.id ? "" : `<button class="tool-btn" type="button" data-action="save-job-draft" ${ui.jobs.isSaving ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : "Save as Draft"}</button>`}<button class="tool-btn jobs-publish-btn" type="button" data-action="create-job-publish" ${ui.jobs.isSaving || !readiness.ready ? "disabled" : ""}>${ui.jobs.isSaving ? "Saving…" : draft.id ? "Save Changes" : "Create & Publish"}</button></div></section>`;
 }
 
 function renderAiMatchSection() {
@@ -5726,6 +6086,8 @@ function renderUsersSection() {
       </div>
     </section>
 
+    ${canManageUsers ? renderTeamVisibilityHealth() : ""}
+
     <section class="panel">
       <div class="section-head-row">
         <div>
@@ -5769,7 +6131,7 @@ function renderUsersSection() {
                         <td>${escapeHtml(user.email)}${phone ? `<br />${escapeHtml(phone)}` : ""}</td>
                         <td>${statusBadge(user.role)}</td>
                         <td>${escapeHtml(user.team || "Unassigned")}</td>
-                        <td>${escapeHtml(user.manager || "-")}</td>
+                        <td>${renderUserManagerCell(user)}</td>
                         <td>${Number(user.monthlyTarget || 0) || "-"}</td>
                         <td>${formatCurrency(user.revenueTarget || 0)}</td>
                         <td>${statusBadge(status)}</td>
@@ -5806,6 +6168,109 @@ function renderUsersSection() {
 
     ${canManageUsers ? renderUserManagementPanel(selectedUser) : ""}
   `;
+}
+
+function renderTeamVisibilityHealth() {
+  const health = getTeamVisibilityHealth();
+  const hasIssues = health.needsSetup.length > 0;
+
+  return `
+    <section class="panel team-visibility-health ${hasIssues ? "has-issues" : "is-ready"}">
+      <div class="section-head-row">
+        <div>
+          <p class="panel-kicker">Job visibility health</p>
+          <h2 class="panel-title">Direct-team access is ${hasIssues ? "incomplete" : "ready"}</h2>
+          <p class="panel-subtitle">Recruiters can see a direct-team job only when they report to the manager who owns it. Organisation-wide jobs remain visible to everyone.</p>
+        </div>
+        <div class="access-chip">${health.ready.length}/${health.recruiters.length} recruiters ready</div>
+      </div>
+      <div class="metrics-grid">
+        ${metricCard("Recruiters", health.recruiters.length)}
+        ${metricCard("Ready for manager jobs", health.ready.length)}
+        ${metricCard("Needs reporting setup", health.needsSetup.length)}
+        ${metricCard("Direct-team jobs reachable", health.reachableJobCount)}
+      </div>
+      ${hasIssues ? `
+        <div class="team-visibility-issue-list">
+          <p><strong>Action needed:</strong> assign each recruiter to an active CEO, Managing Director, Admin, or TA Manager account.</p>
+          ${health.needsSetup.map(({ user, reason }) => `
+            <div class="team-visibility-issue">
+              <span><strong>${escapeHtml(user.name || user.email || "Recruiter")}</strong><small>${escapeHtml(reason)}</small></span>
+              <button class="tool-btn" type="button" data-action="open-user-editor" data-user-id="${escapeHtml(user.id)}">Fix reporting line</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : `<p class="team-visibility-success">All active recruiters have an account-based reporting line. Direct-team job access is ready to use.</p>`}
+    </section>
+  `;
+}
+
+function renderUserManagerCell(user) {
+  const manager = getReportingManagerForUser(user);
+  if (manager) return `${escapeHtml(manager.name)}<br /><span class="muted-small">${escapeHtml(manager.role)}</span>`;
+  if (normalizeUserRole(user?.role) === "Recruiter") return `<span class="manager-missing">Needs reporting line</span>`;
+  return escapeHtml(user?.manager || "-");
+}
+
+function getTeamVisibilityHealth() {
+  const recruiters = state.users.filter((user) =>
+    normalizeUserStatus(user.status) === "Active" && normalizeUserRole(user.role) === "Recruiter"
+  );
+  const ready = [];
+  const needsSetup = [];
+
+  recruiters.forEach((user) => {
+    const manager = getReportingManagerForUser(user);
+    if (manager) {
+      ready.push({ user, manager, reachableJobs: getDirectTeamJobCountForManager(manager) });
+      return;
+    }
+
+    const hasLegacyReference = Boolean(String(user.manager || user.managerEmail || "").trim());
+    needsSetup.push({
+      user,
+      reason: hasLegacyReference
+        ? "The saved manager name is not linked to an active manager account."
+        : "No manager account is assigned."
+    });
+  });
+
+  return {
+    recruiters,
+    ready,
+    needsSetup,
+    reachableJobCount: ready.reduce((total, item) => total + item.reachableJobs, 0)
+  };
+}
+
+function getReportingManagerForUser(user) {
+  const managerId = resolveManagerIdForUser(user);
+  const manager = managerId ? findById(state.users, managerId) : null;
+  return isEligibleReportingManager(manager, user?.id) ? manager : null;
+}
+
+function getEligibleReportingManagers(excludedUserId = "") {
+  return state.users
+    .filter((user) => isEligibleReportingManager(user, excludedUserId))
+    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+}
+
+function isEligibleReportingManager(user, excludedUserId = "") {
+  if (!user || String(user.id || "") === String(excludedUserId || "")) return false;
+  if (normalizeUserStatus(user.status) !== "Active") return false;
+  return ["CEO", "Managing Director", "Admin", "TA Manager"].includes(normalizeUserRole(user.role));
+}
+
+function getDirectTeamJobCountForManager(manager) {
+  return state.jobs.filter((job) => normalizeJobVisibilityScope(job.visibilityScope) === "DIRECT_TEAM" && jobIsOwnedByUser(job, manager)).length;
+}
+
+function jobIsOwnedByUser(job, user) {
+  const userIds = new Set([String(user?.id || "").trim()].filter(Boolean));
+  const userAliases = new Set([user?.name, user?.email].map(normalizePersonKey).filter(Boolean));
+  const ownerIds = [job?.ownerUserId, job?.createdByUserId].map((value) => String(value || "").trim()).filter(Boolean);
+  const ownerAliases = [job?.owner, job?.createdBy, job?.createdByEmail].map(normalizePersonKey).filter(Boolean);
+  return ownerIds.some((id) => userIds.has(id)) || ownerAliases.some((alias) => userAliases.has(alias));
 }
 
 function renderUserManagementPanel(user) {
@@ -5903,21 +6368,26 @@ function userSelectField(label, field, value, options) {
 }
 
 function userManagerSelectField(draft, editedUser) {
-  const eligibleManagers = state.users
-    .filter((candidate) => candidate.id !== editedUser.id)
-    .filter((candidate) => normalizeUserStatus(candidate.status) === "Active")
-    .filter((candidate) => ["CEO", "Managing Director", "Admin", "TA Manager"].includes(normalizeUserRole(candidate.role)))
-    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
-  const selectedManagerId = String(draft.managerId || "");
+  return renderReportingManagerSelect({
+    managerId: draft.managerId,
+    excludedUserId: editedUser.id,
+    id: "user_managerId",
+    action: "user-profile-field",
+    requiredForRecruiter: normalizeUserRole(draft.role) === "Recruiter"
+  });
+}
 
+function renderReportingManagerSelect({ managerId = "", excludedUserId = "", id, action = "", requiredForRecruiter = false }) {
+  const eligibleManagers = getEligibleReportingManagers(excludedUserId);
+  const selectedManagerId = String(managerId || "");
   return `
     <div class="dialog-field">
-      <label for="user_managerId">Reports to</label>
-      <select id="user_managerId" data-action="user-profile-field" data-field="managerId">
+      <label for="${escapeHtml(id)}">Reports to${requiredForRecruiter ? " *" : ""}</label>
+      <select id="${escapeHtml(id)}" ${action ? `data-action="${escapeHtml(action)}"` : ""} name="managerId" ${action ? 'data-field="managerId"' : ""}>
         <option value="">No manager assigned</option>
         ${eligibleManagers.map((manager) => `<option value="${escapeHtml(manager.id)}" ${selectedManagerId === String(manager.id) ? "selected" : ""}>${escapeHtml(manager.name)} · ${escapeHtml(manager.role)}</option>`).join("")}
       </select>
-      <small>Uses the manager’s account, not free text. This controls direct-team job visibility.</small>
+      <small>${requiredForRecruiter ? "Recruiters require a manager account to see direct-team jobs." : "Uses the manager’s account, not free text. This controls direct-team job visibility."}</small>
     </div>
   `;
 }
@@ -6748,6 +7218,79 @@ function getCandidateTimeline(candidate) {
   return normalizeTimelineEvents(parsedData.timeline);
 }
 
+function getCandidateDecisionTimeline(candidateId) {
+  const events = ui.candidates.decisionTimelineByCandidateId?.[candidateId];
+  return Array.isArray(events) ? events : [];
+}
+
+function formatDecisionAuditAction(action) {
+  const labels = {
+    SHORTLIST_DECISION: "Shortlist decision",
+    REJECTION: "Rejected / dropped",
+    STAGE_MOVED: "Stage moved",
+    RATING: "Rating recorded",
+    OWNERSHIP_CHANGED: "Ownership changed",
+    FEEDBACK: "Feedback recorded"
+  };
+  return labels[String(action || "")] || "Decision recorded";
+}
+
+function describeDecisionAuditChange(event) {
+  const before = event?.before && typeof event.before === "object" ? event.before : {};
+  const after = event?.after && typeof event.after === "object" ? event.after : {};
+  if (before.stage || after.stage) return `${before.stage || "Unstaged"} → ${after.stage || "-"}`;
+  if (event?.action === "RATING") {
+    const values = [
+      after.overallRating != null ? `overall ${after.overallRating}/10` : "",
+      after.technicalRating != null ? `technical ${after.technicalRating}/10` : "",
+      after.communicationRating != null ? `communication ${after.communicationRating}/10` : "",
+      after.rating != null ? `overall ${after.rating}/10` : ""
+    ].filter(Boolean);
+    return values.join(" · ");
+  }
+  if (event?.action === "SHORTLIST_DECISION") return [after.decision, after.jobTitle].filter(Boolean).join(" · ");
+  if (event?.action === "OWNERSHIP_CHANGED") return after.recruiter || after.assignedRecruiterId || after.ownerUserId || "Owner updated";
+  if (event?.action === "FEEDBACK") return after.feedbackType || "Feedback";
+  return "";
+}
+
+function renderCandidateDecisionTimeline(candidate) {
+  const candidateId = String(candidate?.id || "");
+  const events = getCandidateDecisionTimeline(candidateId);
+  const loading = Boolean(ui.candidates.decisionTimelineLoading?.[candidateId]);
+  const hasLoaded = Object.prototype.hasOwnProperty.call(ui.candidates.decisionTimelineByCandidateId || {}, candidateId);
+  return `
+    <div class="candidate-timeline-card decision-audit-card">
+      <div class="candidate-timeline-head">
+        <div>
+          <h4>Immutable Decision Timeline</h4>
+          <p>Server-recorded decisions cannot be edited from the ATS.</p>
+        </div>
+        <button class="tool-btn" type="button" data-action="reload-candidate-decision-timeline" data-candidate-id="${escapeHtml(candidateId)}" ${loading ? "disabled" : ""}>${loading ? "Loading…" : hasLoaded ? "Refresh" : "Load"}</button>
+      </div>
+      <div class="candidate-timeline-list decision-audit-list">
+        ${
+          loading && !hasLoaded
+            ? `<p class="panel-subtitle">Loading decision history…</p>`
+            : events.length
+              ? events.slice(0, 20).map((event) => {
+                  const change = describeDecisionAuditChange(event);
+                  return `<article class="timeline-event decision-audit-event">
+                    <strong>${escapeHtml(formatDecisionAuditAction(event.action))}</strong>
+                    <span>${escapeHtml(formatShortDate(event.createdAt || ""))} · ${escapeHtml(event.actorName || "System")}${event.actorRole ? ` · ${escapeHtml(event.actorRole)}` : ""}</span>
+                    ${change ? `<em>${escapeHtml(change)}</em>` : ""}
+                    <p>${escapeHtml(event.reason || "No reason recorded")}</p>
+                  </article>`;
+                }).join("")
+              : hasLoaded
+                ? `<p class="panel-subtitle">No audited decisions yet. New shortlist, rejection, stage, rating, ownership, and feedback actions will appear here.</p>`
+                : `<p class="panel-subtitle">Load the protected history for this candidate.</p>`
+        }
+      </div>
+    </div>
+  `;
+}
+
 function getCandidateCollaborationNotes(candidate) {
   const parsedData = candidate?.parsedData;
   if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return [];
@@ -7547,8 +8090,12 @@ async function saveUserProfileEdits() {
   user.status = status;
   user.team = sanitizeLine(draft.team || "Recruiting", 80) || "Recruiting";
   const manager = findById(state.users, draft.managerId);
-  if (draft.managerId && (!manager || manager.id === user.id)) {
-    alert("Choose a valid manager account.");
+  if (role === "Recruiter" && !manager) {
+    alert("Recruiters need an active manager account to see direct-team jobs.");
+    return;
+  }
+  if (draft.managerId && !isEligibleReportingManager(manager, user.id)) {
+    alert("Choose an active CEO, Managing Director, Admin, or TA Manager account as the reporting manager.");
     return;
   }
   user.managerId = manager ? String(manager.id) : "";
@@ -8190,6 +8737,8 @@ function renderCandidateSidePanel() {
         <div class="candidate-timeline-list">${collaborationNotes.length ? collaborationNotes.slice(0, 12).map((note) => `<article class="timeline-event"><strong>${escapeHtml(note.author || "Team member")}</strong><span>${escapeHtml(formatShortDate(note.createdAt || ""))}${Array.isArray(note.mentions) && note.mentions.length ? ` · mentions ${escapeHtml(note.mentions.join(", "))}` : ""}</span><p>${escapeHtml(note.text || "")}</p></article>`).join("") : `<p class="panel-subtitle">No team notes yet.</p>`}</div>
       </div>
 
+      ${renderCandidateDecisionTimeline(selectedCandidate)}
+
       <div class="candidate-file-card">
         <div>
           <h4>Stage History</h4>
@@ -8706,8 +9255,44 @@ async function updateCandidateFields(candidateId, changes, activityLabel = "Cand
   upsertCandidateInState(updated);
   const pageIndex = (ui.candidates.pageRows || []).findIndex((item) => item.id === updated.id);
   if (pageIndex >= 0) ui.candidates.pageRows[pageIndex] = updated;
+  invalidateCandidateDecisionTimeline(updated.id);
   recordActivity("candidate", `${activityLabel}: ${updated.name}`, { action: "candidate.quick-update", candidateId: updated.id });
   return updated;
+}
+
+function invalidateCandidateDecisionTimeline(candidateId) {
+  const id = String(candidateId || "").trim();
+  if (!id) return;
+  delete ui.candidates.decisionTimelineByCandidateId[id];
+  if (String(ui.candidates.selectedId || "") === id) {
+    void loadCandidateDecisionTimeline(id, true);
+  }
+}
+
+async function loadCandidateDecisionTimeline(candidateId, force = false) {
+  const id = String(candidateId || "").trim();
+  if (!id || !ui.api.connected) return;
+  if (!force && Object.prototype.hasOwnProperty.call(ui.candidates.decisionTimelineByCandidateId || {}, id)) return;
+  if (ui.candidates.decisionTimelineLoading?.[id]) return;
+  ui.candidates.decisionTimelineLoading[id] = true;
+  if (String(ui.candidates.selectedId || "") === id) renderSection();
+  try {
+    const response = await fetch(buildApiUrl(API_ROUTES.candidateDecisionTimeline(id)), {
+      method: "GET",
+      headers: getAuthHeaders({ Accept: "application/json" })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.success) throw new Error(payload?.error?.message || "Could not load the decision timeline.");
+    ui.candidates.decisionTimelineByCandidateId[id] = Array.isArray(payload?.data?.events) ? payload.data.events : [];
+  } catch (error) {
+    delete ui.candidates.decisionTimelineByCandidateId[id];
+    if (String(ui.candidates.selectedId || "") === id) {
+      alert(error instanceof Error ? error.message : "Could not load the decision timeline.");
+    }
+  } finally {
+    delete ui.candidates.decisionTimelineLoading[id];
+    if (String(ui.candidates.selectedId || "") === id) renderSection();
+  }
 }
 
 async function quickUpdateCandidate(candidateId, field, value) {
@@ -8894,6 +9479,7 @@ async function saveCandidateProfileDraft() {
   }
 
   upsertCandidateInState(updated);
+  invalidateCandidateDecisionTimeline(updated.id);
   if (ui.api.connected) {
     ui.candidates.inFlightQueryKey = "";
     ui.candidates.lastQueryKey = "";
@@ -8970,6 +9556,7 @@ async function moveCandidateStage(candidateId, nextStage, movement = {}) {
   }
 
   upsertCandidateInState(updated);
+  invalidateCandidateDecisionTimeline(updated.id);
   if (ui.candidates.selectedId === updated.id) {
     ui.candidates.editDraft = candidateDraftFromRecord(updated);
   }
@@ -9597,6 +10184,10 @@ function normalizeJobStatus(value) {
   return "DRAFT";
 }
 
+function normalizeJobVisibilityScope(value) {
+  return String(value || "DIRECT_TEAM").trim().toUpperCase() === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM";
+}
+
 function displayJobStatus(value) {
   return normalizeJobStatus(value)
     .toLowerCase()
@@ -9638,6 +10229,7 @@ function createJobDraft(initial = {}) {
     minTimeZoneOverlap: source.minTimeZoneOverlap == null ? "" : String(source.minTimeZoneOverlap),
     priority: String(source.priority || "NORMAL").toUpperCase(),
     visibilityScope: String(source.visibilityScope || "DIRECT_TEAM").toUpperCase() === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM",
+    assignedRecruiterId: String(source.assignedRecruiterId || ""),
     jobType,
     openings: source.openings == null || source.openings === "" ? "1" : String(source.openings),
     expMin: source.expMin == null ? "" : String(source.expMin),
@@ -9880,12 +10472,16 @@ async function submitJobDraft(targetStatus) {
   const title = String(draft.title || "").trim();
   const openings = Number(draft.openings || 1);
   const clientId = String(draft.clientId || "");
+  const assignedRecruiterId = getDraftAssignedRecruiterId(draft);
   if (!title) {
     alert("Job title is required.");
     return;
   }
-  if (!clientId) {
-    alert("Please select a client.");
+  const readiness = getJobPublishReadiness(draft, assignedRecruiterId);
+  if (targetStatus === "ACTIVE" && !readiness.ready) {
+    ui.jobs.createStep = 3;
+    renderSection();
+    alert(`Complete these essentials before publishing: ${readiness.missing.join(", ")}.`);
     return;
   }
 
@@ -9923,7 +10519,8 @@ async function submitJobDraft(targetStatus) {
     workingHours: String(draft.workingHours || ""),
     minTimeZoneOverlap: draft.minTimeZoneOverlap === "" ? null : Number(draft.minTimeZoneOverlap),
     priority: String(draft.priority || "NORMAL"),
-    visibilityScope: draft.visibilityScope === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM"
+    visibilityScope: draft.visibilityScope === "ORGANIZATION" ? "ORGANIZATION" : "DIRECT_TEAM",
+    assignedRecruiterId
   };
 
   ui.jobs.isSaving = true;
@@ -10036,6 +10633,7 @@ async function duplicateJobViaApi(jobId) {
     replaceJobInState(payload.data.job);
     ui.jobs.draft = createJobDraft(payload.data.job);
     ui.jobs.mode = "create";
+    ui.jobs.createStep = 2;
     invalidateJobInsights();
     saveState(state);
     renderSection();
@@ -11398,6 +11996,7 @@ async function refreshPendingDuplicatesFromBackend() {
 function openCreateDialog() {
   if (ui.activeSection === "jobs") {
     ui.jobs.mode = "create";
+    ui.jobs.createStep = 1;
     ui.jobs.draft = createJobDraft();
     renderSection();
     return;
@@ -11420,6 +12019,13 @@ function openCreateDialog() {
   el.recordFields.innerHTML = FORM_SCHEMAS[entity]
     .map((field) => {
       const defaultValue = getCreateDialogDefaultValue(entity, field.name);
+      if (field.type === "manager-select") {
+        return `${renderReportingManagerSelect({
+          managerId: defaultValue,
+          id: `dialog_${field.name}`,
+          requiredForRecruiter: false
+        })}<p class="manager-select-hint">Required when the new user is a Recruiter; this determines which manager-owned direct-team jobs they can see.</p>`;
+      }
       if (field.type === "select") {
         return `
           <div class="dialog-field">
@@ -11697,6 +12303,8 @@ async function onSubmitRecord(event) {
     const email = normalizeEmail(data.email);
     const role = normalizeUserRole(data.role);
     const password = String(data.password || "");
+    const managerId = String(data.managerId || "").trim();
+    const manager = managerId ? findById(state.users, managerId) : null;
 
     if (!isAgodlyCompanyEmail(email)) {
       alert("User email must end with @agodly.com.");
@@ -11713,6 +12321,16 @@ async function onSubmitRecord(event) {
       return;
     }
 
+    if (role === "Recruiter" && !manager) {
+      alert("Assign an active manager account before creating a recruiter. This enables direct-team job visibility.");
+      return;
+    }
+
+    if (managerId && !isEligibleReportingManager(manager)) {
+      alert("Choose an active CEO, Managing Director, Admin, or TA Manager account as the reporting manager.");
+      return;
+    }
+
     const record = {
       id: uid("usr"),
       name: String(data.name || "").trim(),
@@ -11721,7 +12339,9 @@ async function onSubmitRecord(event) {
       role,
       status: normalizeUserStatus(data.status),
       team: String(data.team || "Recruiting").trim() || "Recruiting",
-      manager: String(data.manager || "").trim(),
+      managerId: manager ? String(manager.id) : "",
+      manager: manager ? String(manager.name || "") : "",
+      managerEmail: manager ? normalizeEmail(manager.email) : "",
       monthlyTarget: normalizeMonthlyTarget(data.monthlyTarget, role),
       revenueTarget: normalizeRevenueTarget(data.revenueTarget),
       passwordConfigured: true,

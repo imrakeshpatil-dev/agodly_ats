@@ -64,6 +64,8 @@ export const submitAiFeedback = async (req: Request, res: Response): Promise<voi
 export const scoreAiMatch = async (req: Request, res: Response): Promise<void> => {
   const jobDescription = String(req.body?.jobDescription || "").trim();
   const keywords = String(req.body?.keywords || "").trim();
+  const jobLocation = String(req.body?.jobLocation || "").trim();
+  const workMode = String(req.body?.workMode || "").trim();
   const topKRaw = Number(req.body?.topK || 15);
   const topK = Number.isFinite(topKRaw) ? Math.min(Math.max(Math.round(topKRaw), 1), 25) : 15;
 
@@ -76,6 +78,8 @@ export const scoreAiMatch = async (req: Request, res: Response): Promise<void> =
   const output = await matchCandidatesToJob({
     jobDescription,
     keywords: keywords || undefined,
+    jobLocation: jobLocation || undefined,
+    workMode: workMode || undefined,
     topK
   }, authContext);
 

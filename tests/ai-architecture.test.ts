@@ -47,6 +47,26 @@ test("existing authenticated AI and resume API contracts remain present", async 
   assert.match(reparse, /reparseCandidateWithAI/);
 });
 
+test("job shortlists expose evidence and persist recruiter decisions", async () => {
+  const [tools, controller, browser] = await Promise.all([
+    read("lib/server/services/aiTools.ts"),
+    read("lib/server/controllers/aiController.ts"),
+    read("app.js")
+  ]);
+
+  assert.match(tools, /matchedMustHaves/);
+  assert.match(tools, /missingMustHaves/);
+  assert.match(tools, /locationFit/);
+  assert.match(tools, /availability/);
+  assert.match(controller, /jobLocation/);
+  assert.match(controller, /workMode/);
+  assert.match(browser, /Must-have skills/);
+  assert.match(browser, /Score rationale/);
+  assert.match(browser, /Recruiter decision/);
+  assert.match(browser, /shortlistDecisions/);
+  assert.match(browser, /record-job-shortlist-decision/);
+});
+
 test("provider keys stay server-side and are absent from browser assets", async () => {
   const [browser, html] = await Promise.all([read("app.js"), read("index.html")]);
   for (const content of [browser, html]) {

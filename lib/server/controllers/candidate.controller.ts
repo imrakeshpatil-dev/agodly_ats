@@ -9,6 +9,7 @@ import { isFounderRole } from "../services/auth.service";
 import { authorizationService, type AuthorizationContext } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import { candidateResumeService } from "../services/candidate-resume.service";
+import { candidateDecisionAuditService } from "../services/candidate-decision-audit.service";
 import { bulkUploadService } from "../services/bulk-upload.service";
 import {
   addFounderReviewRequest,
@@ -352,11 +353,30 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
   }
 
   const candidate = await candidateStoreService.updateCandidateProfile(candidateId, patch);
+  if (authUser) {
+    await candidateDecisionAuditService.recordCandidateUpdate({
+      existing: existingCandidate,
+      updated: candidate,
+      patch,
+      actor: authUser
+    });
+  }
 
   res.status(200).json({
     success: true,
     candidate
   });
+};
+
+export const listCandidateDecisionTimeline = async (req: Request, res: Response): Promise<void> => {
+  const candidateId = String(req.params.id || "").trim();
+  if (!candidateId) throw new AppError("Candidate id is required", 400);
+
+  const context = await getAuthorizationContext(req);
+  await getCandidateOrDeny(req, context, candidateId, "candidate-decision-timeline");
+  const events = await candidateDecisionAuditService.listForCandidate(candidateId);
+
+  res.status(200).json({ success: true, data: { events } });
 };
 
 export const submitFounderCandidateReview = async (req: Request, res: Response): Promise<void> => {
@@ -389,6 +409,13 @@ export const submitFounderCandidateReview = async (req: Request, res: Response):
 
   const updated = await candidateStoreService.updateCandidateProfile(candidate.id, {
     parsedData: completed.parsedData
+  });
+  await candidateDecisionAuditService.recordFounderReview({
+    candidate: updated,
+    actor: authUser,
+    rating,
+    notes,
+    reviewId
   });
 
   res.status(200).json({

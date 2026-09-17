@@ -32,6 +32,8 @@ export interface ATSheetQueryInput {
 export interface JobMatchInput {
   jobDescription: string;
   keywords?: string;
+  jobLocation?: string;
+  workMode?: string;
   topK?: number;
 }
 
@@ -251,10 +253,14 @@ const normalizeCandidate = (candidate: CandidateRecord | Record<string, unknown>
     currentCompany: String(source.currentCompany || ""),
     experienceYears: source.experienceYears == null ? null : Number(source.experienceYears),
     skills,
+    keywords: Array.isArray(source.keywords) ? source.keywords.map((item) => String(item)) : [],
     profileSummary: String(source.profileSummary || ""),
     source: String(source.source || ""),
     resumeUrl: String(source.resumeUrl || ""),
-    parsingStatus: String(source.parsingStatus || "")
+    parsingStatus: String(source.parsingStatus || ""),
+    stage: String(source.stage || ""),
+    jobId: String(source.jobId || ""),
+    parsedData: source.parsedData && typeof source.parsedData === "object" ? source.parsedData : {}
   };
 };
 
@@ -297,6 +303,36 @@ const extractMinExperienceYears = (text: string): number | null => {
   if (!match) return null;
   const parsed = Number(match[1]);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const evaluateLocationFit = (candidateLocation: unknown, jobLocation: unknown, workMode: unknown): string => {
+  const candidate = normalizeMatchText(String(candidateLocation || ""));
+  const requirement = normalizeMatchText(String(jobLocation || ""));
+  if (String(workMode || "").trim().toUpperCase() === "REMOTE") return "Remote-compatible role";
+  if (!requirement) return "Job location not specified";
+  if (!candidate) return "Candidate location not recorded";
+  const locationTerms = requirement.split(/\s*,\s*|\s*\/\s*/).map(normalizeMatchText).filter(Boolean);
+  return locationTerms.some((location) => candidate.includes(location) || location.includes(candidate))
+    ? "Matches job location"
+    : "Different location — confirm mobility";
+};
+
+const getAvailabilitySignal = (candidate: CandidateRecord | Record<string, unknown>): string => {
+  const source = candidate as Record<string, unknown>;
+  const parsedData = source.parsedData && typeof source.parsedData === "object"
+    ? source.parsedData as Record<string, unknown>
+    : {};
+  const tracking = parsedData.tracking && typeof parsedData.tracking === "object"
+    ? parsedData.tracking as Record<string, unknown>
+    : {};
+  const explicit = [parsedData.availability, parsedData.noticePeriod, tracking.availability, tracking.noticePeriod]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+  if (explicit) return explicit;
+  const stage = String(source.stage || tracking.trackingStatus || "").trim();
+  if (/^(on hold|dropped|rejected)$/i.test(stage)) return `Not active — ${stage}`;
+  if (stage) return `Active in ATS — ${stage}`;
+  return "Availability not recorded";
 };
 
 const toLower = (value: unknown): string => String(value || "").trim().toLowerCase();
@@ -471,6 +507,8 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
   requiredTerms: string[];
   mustHaveTerms: string[];
   minExperienceYears: number | null;
+  jobLocation: string;
+  workMode: string;
   ranked: Record<string, unknown>[];
   topK: number;
 }): Promise<Record<string, unknown>[] | null> => {
@@ -513,6 +551,8 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
             requiredTerms: input.requiredTerms.slice(0, 60),
             mustHaveTerms: input.mustHaveTerms.slice(0, 20),
             minExperienceYears: input.minExperienceYears,
+            jobLocation: input.jobLocation,
+            workMode: input.workMode,
             jobDescription: trimSnippet(input.jobDescription, 5000),
             candidates: shortlist,
             outputFormat: {
@@ -522,6 +562,7 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
                   matchPercentage: "integer 0..100",
                   confidenceLabel: "High|Medium|Low",
                   matchedSkills: ["up to 20"],
+                  matchedMustHaves: ["up to 20"],
                   matchedTerms: ["up to 20"],
                   missingMustHaves: ["up to 20"],
                   experienceGapYears: "integer >= 0",
@@ -582,6 +623,9 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
         const missingMustHaves = toStringArraySafe(llm.missingMustHaves).length
           ? toStringArraySafe(llm.missingMustHaves)
           : toStringArraySafe(candidate.missingMustHaves);
+        const matchedMustHaves = toStringArraySafe(llm.matchedMustHaves).length
+          ? toStringArraySafe(llm.matchedMustHaves)
+          : toStringArraySafe(candidate.matchedMustHaves);
 
         const scoreBreakdown =
           llm.scoreBreakdown && typeof llm.scoreBreakdown === "object" ? llm.scoreBreakdown : candidate.scoreBreakdown;
@@ -593,6 +637,7 @@ const rerankWithConfiguredProviderForJobMatch = async (input: {
           experienceGapYears,
           matchedSkills,
           matchedTerms,
+          matchedMustHaves,
           missingMustHaves,
           confidenceExplanation: trimSnippet(llm.confidenceExplanation || candidate.confidenceExplanation, 320),
           scoreBreakdown
@@ -619,6 +664,10 @@ export const matchCandidatesToJob = async (
     typeof jobMatchInput === "string" ? jobMatchInput : String(jobMatchInput.jobDescription || "");
   const keywords =
     typeof jobMatchInput === "string" ? "" : String(jobMatchInput.keywords || "").trim();
+  const jobLocation =
+    typeof jobMatchInput === "string" ? "" : String(jobMatchInput.jobLocation || "").trim();
+  const workMode =
+    typeof jobMatchInput === "string" ? "" : String(jobMatchInput.workMode || "").trim();
   const topK = clamp(
     Number(typeof jobMatchInput === "string" ? 15 : jobMatchInput.topK || 15),
     1,
@@ -690,10 +739,13 @@ export const matchCandidatesToJob = async (
         ...candidate,
         matchedSkills,
         matchedTerms: matchedTerms.slice(0, 20),
+        matchedMustHaves: matchedMustHaves.slice(0, 20),
         missingMustHaves: missingMustHaves.slice(0, 20),
         matchPercentage,
         minExperienceRequired: minExperienceYears,
         experienceGapYears,
+        locationFit: evaluateLocationFit(candidate.location, jobLocation, workMode),
+        availability: getAvailabilitySignal(candidate),
         confidenceLabel,
         confidenceExplanation,
         scoreBreakdown: {
@@ -721,6 +773,8 @@ export const matchCandidatesToJob = async (
     requiredTerms,
     mustHaveTerms,
     minExperienceYears,
+    jobLocation,
+    workMode,
     ranked: heuristicRanked,
     topK
   });

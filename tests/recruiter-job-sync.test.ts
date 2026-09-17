@@ -151,3 +151,13 @@ test("the browser refreshes shared state and versions job edits", async () => {
   assert.match(browser, /managerEmail = manager/);
   assert.match(browser, /This controls direct-team job visibility/);
 });
+
+test("new recruiters must use an account-based reporting line", async () => {
+  const browser = await read("app.js");
+
+  assert.match(browser, /name: "managerId", label: "Reports to", type: "manager-select"/);
+  assert.match(browser, /renderReportingManagerSelect/);
+  assert.match(browser, /Assign an active manager account before creating a recruiter/);
+  assert.match(browser, /Recruiters need an active manager account to see direct-team jobs/);
+  assert.match(browser, /renderTeamVisibilityHealth/);
+});
