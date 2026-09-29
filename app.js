@@ -12618,6 +12618,10 @@ async function onSubmitRecord(event) {
 
     state.clients.push(record);
     recordActivity("client", `Client created: ${record.name}`);
+    el.recordForm?.reset();
+    closeRecordDialog();
+    await saveAndRenderSyncNow("Client created and synced.");
+    return;
   }
 
   if (entity === "jobs") {
@@ -13199,8 +13203,8 @@ async function syncStateToBackend(options = {}) {
     }
 
     return true;
-  } catch {
-    ui.api.message = "Backend sync failed";
+  } catch (error) {
+    ui.api.message = error instanceof Error ? error.message : "Backend sync failed";
     renderApiStatus();
     return false;
   } finally {

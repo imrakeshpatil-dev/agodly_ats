@@ -55,7 +55,6 @@ export const syncBootstrapState = async (req: Request, res: Response): Promise<v
   const permittedCandidates = await candidateStoreService.getCandidatesForContext(context);
   const roleScopedPayload = scopeAppStatePayloadForRole(requestedPayload, authUser.role);
   const payload = authorizationService.scopeSyncPayload(context, roleScopedPayload, permittedCandidates);
-  await assertPlacementClientAssignments(payload.placements);
 
   if (!isFounderRole(authUser.role) && requestedBulkUpload) {
     await appStateStoreService.updateBulkUploadForUser(authUser.id, requestedBulkUpload);
@@ -129,20 +128,4 @@ const toOptionalRowArray = (value: unknown): Array<Record<string, unknown>> | un
   return value
     .filter((item) => item && typeof item === "object" && !Array.isArray(item))
     .map((item) => ({ ...(item as Record<string, unknown>) }));
-};
-
-const assertPlacementClientAssignments = async (placements: Array<Record<string, unknown>> | undefined): Promise<void> => {
-  if (!placements?.length) return;
-  const clients = await appStateStoreService.getClients();
-  const clientIds = new Set(clients.map((client) => String(client.id || "").trim()).filter(Boolean));
-
-  for (const placement of placements) {
-    const clientId = String(placement.clientId || "").trim();
-    if (!clientId) {
-      throw new AppError("Every deployed candidate placement must have an assigned client", 400);
-    }
-    if (!clientIds.has(clientId)) {
-      throw new AppError("A placement client must be an active organisation client", 400);
-    }
-  }
 };

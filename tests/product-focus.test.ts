@@ -44,6 +44,7 @@ test("contractual onboarding retains project dates and rolls actual finance up b
   assert.match(browser, /Assign a valid client before saving deployed candidate finance/);
   assert.match(browser, /Deployment Client/);
   assert.match(browser, /Candidate onboarded with client assignment and synced/);
+  assert.match(browser, /Client created and synced/);
   assert.match(browser, /projectStartDate: String\(item\.projectStartDate \|\| item\.startDate \|\| ""\)/);
   assert.match(browser, /projectEndDate: String\(item\.projectEndDate \|\| item\.endDate \|\| ""\)/);
 });
