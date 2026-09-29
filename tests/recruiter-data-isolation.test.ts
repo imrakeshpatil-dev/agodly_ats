@@ -30,6 +30,8 @@ const manager = context("TA Manager", "usr-manager", ["usr-manager", "usr-a", "u
   "b@agodly.com"
 ]);
 const admin = context("Admin", "usr-admin", ["usr-admin"], ["admin", "admin@agodly.com"]);
+const ceo = context("CEO", "usr-ceo", ["usr-ceo"], ["ceo", "ceo@agodly.com"]);
+const managingDirector = context("Managing Director", "usr-md", ["usr-md"], ["md", "md@agodly.com"]);
 
 const candidateA = candidate("candidate-a", "usr-a", "Recruiter A", "a-candidate@example.com");
 const candidateB = candidate("candidate-b", "usr-b", "Recruiter B", "b-candidate@example.com");
@@ -153,6 +155,27 @@ test("bootstrap state cannot reveal another recruiter's candidates, jobs, client
   assert.equal("revenue" in scoped.placements[0], false);
 });
 
+test("executive finance figures are restricted to the CEO and Managing Director", () => {
+  assert.equal(authorizationService.canViewRevenue(ceo), true);
+  assert.equal(authorizationService.canViewRevenue(managingDirector), true);
+  assert.equal(authorizationService.canViewRevenue(admin), false);
+  assert.equal(authorizationService.canViewRevenue(manager), false);
+
+  const adminSnapshot = authorizationService.scopeAppState(admin, {
+    bulkUpload: {},
+    users: [],
+    candidates: [candidateA],
+    clients: [],
+    jobs: [],
+    interviews: [],
+    placements: [{ id: "placement-a", candidateId: candidateA.id, revenue: 1000, cost: 500, margin: 500 }],
+    activities: []
+  });
+  assert.equal("revenue" in adminSnapshot.placements[0], false);
+  assert.equal("cost" in adminSnapshot.placements[0], false);
+  assert.equal("margin" in adminSnapshot.placements[0], false);
+});
+
 test("sync payload rejects cross-recruiter mutations and ownership reassignment", () => {
   const payload: AppStateStorePayload = {
     bulkUpload: { candidateNotes: [candidateB] },
@@ -164,7 +187,10 @@ test("sync payload rejects cross-recruiter mutations and ownership reassignment"
       { id: "interview-a", candidateId: candidateA.id },
       { id: "interview-b", candidateId: candidateB.id }
     ],
-    placements: [{ id: "placement-b", candidateId: candidateB.id }],
+    placements: [
+      { id: "placement-a", candidateId: candidateA.id, clientId: "client-a" },
+      { id: "placement-b", candidateId: candidateB.id, clientId: "client-b" }
+    ],
     activities: [
       { id: "activity-a", candidateId: candidateA.id },
       { id: "activity-b", candidateId: candidateB.id }
@@ -175,7 +201,7 @@ test("sync payload rejects cross-recruiter mutations and ownership reassignment"
   assert.equal(scoped.bulkUpload, undefined);
   assert.deepEqual(scoped.jobs?.map((row) => row.id), ["job-a"]);
   assert.deepEqual(scoped.interviews?.map((row) => row.id), ["interview-a"]);
-  assert.equal(scoped.placements, undefined);
+  assert.deepEqual(scoped.placements?.map((row) => row.id), ["placement-a"]);
   assert.deepEqual(scoped.activities?.map((row) => row.id), ["activity-a"]);
   assert.equal(authorizationService.canAssignCandidateOwner(recruiterA, "usr-b"), false);
   assert.equal(authorizationService.canAssignCandidateOwner(manager, "usr-b"), true);

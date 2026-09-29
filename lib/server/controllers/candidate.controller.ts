@@ -6,6 +6,7 @@ import { isPipelineStage } from "../constants/pipeline";
 import { AppError } from "../middleware/error.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 import { isFounderRole } from "../services/auth.service";
+import { appStateStoreService } from "../services/app-state-store.service";
 import { authorizationService, type AuthorizationContext } from "../services/authorization.service";
 import { candidateStoreService } from "../services/candidate-store.service";
 import { candidateResumeService } from "../services/candidate-resume.service";
@@ -91,6 +92,9 @@ export const createCandidate = async (req: Request, res: Response): Promise<void
   const requestedStage = toOptionalString(body.stage) || "Identified";
   if (!isPipelineStage(requestedStage)) {
     throw new AppError("Invalid candidate pipeline stage", 400);
+  }
+  if (requestedStage === "Onboarded") {
+    await assertDeploymentClient(toOptionalObject(body.parsedData));
   }
 
   const candidateInput: CandidateInput = {
@@ -316,6 +320,9 @@ export const updateCandidateProfile = async (req: Request, res: Response): Promi
   const context = await assertCanMutateCandidate(req, existingCandidate);
   if (patch.stage !== undefined && !isPipelineStage(patch.stage)) {
     throw new AppError("Invalid candidate pipeline stage", 400);
+  }
+  if (patch.stage === "Onboarded" && patch.stage !== existingCandidate.stage) {
+    await assertDeploymentClient(patch.parsedData ?? existingCandidate.parsedData);
   }
   const authUser = (req as Partial<AuthenticatedRequest>).authUser;
   const targetOwnerId = patch.assignedRecruiterId ?? patch.ownerUserId;
@@ -604,6 +611,22 @@ const toOptionalObject = (value: unknown): Record<string, unknown> | null | unde
     throw new AppError("parsedData must be a JSON object", 400);
   }
   return value as Record<string, unknown>;
+};
+
+const assertDeploymentClient = async (parsedData: Record<string, unknown> | null | undefined): Promise<void> => {
+  const deployment = parsedData?.deployment;
+  const clientId = deployment && typeof deployment === "object" && !Array.isArray(deployment)
+    ? String((deployment as Record<string, unknown>).clientId || "").trim()
+    : "";
+
+  if (!clientId) {
+    throw new AppError("A deployment client is required before onboarding a candidate", 400);
+  }
+
+  const clients = await appStateStoreService.getClients();
+  if (!clients.some((client) => String(client.id || "").trim() === clientId)) {
+    throw new AppError("The deployment client must be an active organisation client", 400);
+  }
 };
 
 const toOptionalParsingStatus = (value: unknown): "PENDING" | "COMPLETED" | "FAILED" | undefined => {

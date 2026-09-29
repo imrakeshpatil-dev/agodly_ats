@@ -801,9 +801,47 @@ select {
   padding: 0.44rem 0.52rem;
 }
 
+.tracker-client-select {
+  width: 170px;
+}
+
+.finance-data-warning {
+  margin: 0.85rem 0;
+  border: 1px solid rgba(237, 185, 70, 0.55);
+  border-radius: 9px;
+  background: rgba(237, 185, 70, 0.1);
+  color: #f4cf78;
+  padding: 0.65rem 0.8rem;
+}
+
 .tracker-input:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.contract-finance-summary {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.executive-growth-panel {
+  border-color: rgba(237, 185, 70, 0.45);
+}
+
+.executive-client-table {
+  margin-top: 1rem;
+}
+
+.executive-access-badge {
+  border: 1px solid rgba(237, 185, 70, 0.55);
+  border-radius: 999px;
+  background: rgba(237, 185, 70, 0.12);
+  color: #f4cf78;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0.35rem 0.6rem;
+  white-space: nowrap;
 }
 
 .inline-copy-row {

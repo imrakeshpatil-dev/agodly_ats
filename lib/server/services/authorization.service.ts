@@ -136,7 +136,7 @@ class AuthorizationService {
   }
 
   canViewRevenue(context: AuthorizationContext): boolean {
-    return isFounderRole(context.user.role);
+    return context.user.role === "CEO" || context.user.role === "Managing Director";
   }
 
   canViewPrivateNote(context: AuthorizationContext, note: AtsRecord): boolean {
@@ -157,7 +157,15 @@ class AuthorizationService {
   }
 
   scopeAppState(context: AuthorizationContext, snapshot: AppStateSnapshot): AppStateSnapshot {
-    if (isFounderRole(context.user.role)) return snapshot;
+    if (isFounderRole(context.user.role)) {
+      if (this.canViewRevenue(context)) return snapshot;
+      return {
+        ...snapshot,
+        placements: snapshot.placements.map((placement) =>
+          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])
+        )
+      };
+    }
 
     const candidates = this.scopeCandidates(context, snapshot.candidates);
     const jobs = snapshot.jobs.filter((job) => this.canViewJob(context, job));
@@ -200,9 +208,7 @@ class AuthorizationService {
         : undefined,
       jobs: payload.jobs?.filter((job) => this.canEditJob(context, job)),
       interviews: payload.interviews?.filter((interview) => this.canViewInterview(context, interview, permittedCandidates)),
-      placements: context.user.role === "TA Manager"
-        ? payload.placements?.filter((placement) => this.canViewSubmission(context, placement, permittedCandidates))
-        : undefined,
+      placements: payload.placements?.filter((placement) => this.canEditSubmission(context, placement, permittedCandidates)),
       activities: payload.activities?.filter((activity) => this.canViewActivity(context, activity, permittedCandidates))
     };
   }

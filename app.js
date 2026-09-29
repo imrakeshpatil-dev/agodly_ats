@@ -2207,7 +2207,6 @@ function getAllowedSectionsForCurrentUser() {
     "users",
     "team-dashboard",
     "diagnostics",
-    "revenue",
     "recruiter-performance",
     "leaderboard",
     "activity-log"
@@ -2240,6 +2239,7 @@ function getAllowedSectionsForCurrentUser() {
   ]);
 
   const role = normalizeUserRole(getCurrentUser()?.role);
+  if (canCurrentUserAccessExecutiveFinance()) return new Set([...founderSections, "revenue"]);
   if (canCurrentUserAccessFounderWorkspace()) return founderSections;
   if (READ_ONLY_ROLES.has(role)) return viewerSections;
   if (role === "TA Manager") return managerSections;
@@ -3253,8 +3253,8 @@ function renderDashboardSection() {
   const totalCandidates = candidates.length;
   const totalJobs = jobs.length;
   const submittedThisMonth = candidates.filter((item) => candidateHasReachedStage(item, "Submitted") && isCurrentMonth(item.createdAt)).length;
-  const joinedThisMonth = placements.filter((item) => isCurrentMonth(item.date)).length;
-  const totalRevenue = placements.reduce((acc, item) => acc + Number(item.revenue || 0), 0);
+  const joinedThisMonth = placements.filter((item) => isCurrentMonth(getPlacementRecognitionDate(item))).length;
+  const totalRevenue = placements.reduce((acc, item) => acc + getPlacementRevenue(item), 0);
   const totalMargin = placements.reduce((acc, item) => acc + calculatePlacementMargin(item), 0);
   const closureTracker = getClosureTrackerMetrics(candidates);
 
@@ -3288,7 +3288,7 @@ function renderDashboardSection() {
           isFounder
             ? `
               ${quickActionButton("Team", "Team dashboard", "team-dashboard")}
-              ${quickActionButton("Finance", "Revenue view", "revenue")}
+              ${canCurrentUserAccessExecutiveFinance() ? quickActionButton("Finance", "Executive revenue view", "revenue") : ""}
               ${quickActionButton("Users", "Access control", "users")}
               ${quickActionButton("Ops", "Activity log", "activity-log")}
             `
@@ -3770,23 +3770,34 @@ function renderRecruiterDashboardPerformance() {
 
 function renderOnboardedRevenueTracker() {
   const rows = getOnboardedRevenueRows();
+  const missingClientAssignments = rows.filter((row) => !row.clientId);
   const totalRevenue = rows.reduce((acc, item) => acc + item.revenue, 0);
   const totalCost = rows.reduce((acc, item) => acc + item.cost, 0);
   const totalMargin = totalRevenue - totalCost;
+  const contractualRows = rows.filter((item) => item.engagementType === "Contractual");
+  const contractualRevenue = contractualRows.reduce((acc, item) => acc + item.revenue, 0);
+  const contractualCost = contractualRows.reduce((acc, item) => acc + item.cost, 0);
+  const contractualMargin = contractualRevenue - contractualCost;
+  const contractualByTa = getContractualRevenueByTa(contractualRows);
 
   return `
     <section class="panel">
       <div class="section-heading-row">
         <div>
           <h2 class="panel-title">Onboarded Revenue & Margin</h2>
-          <p class="panel-subtitle">Update revenue and delivery cost for onboarded candidates. Margin is calculated automatically.</p>
+          <p class="panel-subtitle">Track actual revenue and delivery cost for every onboarded candidate. Contractual projects also retain their start and completion dates.</p>
         </div>
         <div class="tracker-summary">
-          <span>Revenue ${formatCurrency(totalRevenue)}</span>
-          <span>Cost ${formatCurrency(totalCost)}</span>
-          <span>Margin ${formatCurrency(totalMargin)}</span>
+          <span>Overall Revenue ${formatCurrency(totalRevenue)}</span>
+          <span>Overall Cost ${formatCurrency(totalCost)}</span>
+          <span>Overall Margin ${formatCurrency(totalMargin)}</span>
         </div>
       </div>
+      ${
+        missingClientAssignments.length
+          ? `<p class="finance-data-warning">Client assignment required for ${missingClientAssignments.length} deployed candidate${missingClientAssignments.length === 1 ? "" : "s"}. Their revenue will remain flagged until a client is saved.</p>`
+          : ""
+      }
       <div class="table-wrap">
         <table>
           <thead>
@@ -3794,9 +3805,12 @@ function renderOnboardedRevenueTracker() {
               <th>Candidate</th>
               <th>TA</th>
               <th>Job</th>
-              <th>Joined Date</th>
-              <th>Revenue</th>
-              <th>Cost</th>
+              <th>Client</th>
+              <th>Type</th>
+              <th>Start Date</th>
+              <th>Project End</th>
+              <th>Actual Revenue</th>
+              <th>Delivery Cost</th>
               <th>Margin</th>
               <th>Action</th>
             </tr>
@@ -3812,7 +3826,15 @@ function renderOnboardedRevenueTracker() {
                           <td><strong>${escapeHtml(row.candidateName)}</strong></td>
                           <td>${escapeHtml(row.recruiter)}</td>
                           <td>${escapeHtml(row.jobTitle)}</td>
-                          <td>${escapeHtml(row.date)}</td>
+                          <td>
+                            <select class="tracker-input tracker-client-select" data-finance-field="clientId" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}>
+                              <option value="">Assign client *</option>
+                              ${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${row.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
+                            </select>
+                          </td>
+                          <td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectStartDate || row.date)}" ${editable ? "" : "disabled"} />` : escapeHtml(row.date)}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectEndDate || "")}" ${editable ? "" : "disabled"} />` : "—"}</td>
                           <td>
                             <input
                               class="tracker-input"
@@ -3850,11 +3872,24 @@ function renderOnboardedRevenueTracker() {
                       `;
                     })
                     .join("")
-                : `<tr><td colspan="8" class="empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</td></tr>`
+                : `<tr><td colspan="11" class="empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</td></tr>`
             }
           </tbody>
         </table>
       </div>
+      ${
+        contractualRows.length
+          ? `<div class="contract-finance-summary">
+              <div class="section-heading-row">
+                <div><h3 class="jobs-block-title">Contractual project totals</h3><p class="panel-subtitle">Actual revenue and margin from C2C/C2H placements, grouped by TA.</p></div>
+                <div class="tracker-summary"><span>Revenue ${formatCurrency(contractualRevenue)}</span><span>Cost ${formatCurrency(contractualCost)}</span><span>Margin ${formatCurrency(contractualMargin)}</span></div>
+              </div>
+              <div class="table-wrap"><table><thead><tr><th>TA</th><th>Active Projects</th><th>Completed Projects</th><th>Revenue</th><th>Cost</th><th>Margin</th></tr></thead><tbody>
+                ${contractualByTa.map((row) => `<tr><td><strong>${escapeHtml(row.recruiter)}</strong></td><td>${row.activeProjects}</td><td>${row.completedProjects}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.cost)}</td><td>${formatCurrency(row.margin)}<br /><span class="muted-cell">${formatPercent(row.marginPercent)}</span></td></tr>`).join("")}
+              </tbody></table></div>
+            </div>`
+          : ""
+      }
     </section>
   `;
 }
@@ -6667,7 +6702,7 @@ function getRecruiterPerformanceRows(options = {}) {
   const inPerformancePeriod = (value) => currentMonthOnly ? isCurrentMonth(value) : inSelectedPeriod(value);
   const activeCandidates = state.candidates.filter((item) => !isCandidateDeleted(item) && inPerformancePeriod(item.createdAt));
   const periodInterviews = state.interviews.filter((item) => inPerformancePeriod(item.scheduledAt));
-  const periodPlacements = state.placements.filter((item) => inPerformancePeriod(item.date));
+  const periodPlacements = state.placements.filter((item) => inPerformancePeriod(getPlacementRecognitionDate(item)));
   const recruitingUsers = state.users.filter((user) => recruitingRoles.has(user.role));
   const usersByIdentity = new Map();
   const participants = new Map();
@@ -6714,7 +6749,7 @@ function getRecruiterPerformanceRows(options = {}) {
       const offers = candidates.filter((candidate) => ["Offer", "Onboarded"].includes(candidate.stage)).length;
       const joined = joinedCandidateIds.size;
       const dropped = candidates.filter((candidate) => candidate.stage === "Dropped").length;
-      const revenue = placements.reduce((acc, placement) => acc + Number(placement.revenue || 0), 0);
+      const revenue = placements.reduce((acc, placement) => acc + getPlacementRevenue(placement), 0);
       const cost = placements.reduce((acc, placement) => acc + calculatePlacementCost(placement), 0);
       const margin = revenue - cost;
       const monthlyTarget = normalizeMonthlyTarget(user.monthlyTarget, user.role || "Recruiter");
@@ -6813,9 +6848,14 @@ function getOnboardedRevenueRows() {
     .map((candidate) => {
       const placement = findPlacementForCandidate(candidate.id);
       const job = findById(state.jobs, placement?.jobId || candidate.jobId);
-      const revenue = Number(placement?.revenue || 0);
+      const engagementType = getPlacementEngagementType(placement, job, candidate);
+      const revenue = getPlacementRevenue(placement);
       const cost = calculatePlacementCost(placement);
       const margin = revenue - cost;
+      const projectStartDate = String(placement?.projectStartDate || placement?.startDate || placement?.date || "");
+      const projectEndDate = String(placement?.projectEndDate || placement?.endDate || "");
+      const clientId = String(placement?.clientId || "");
+      const client = findById(state.clients, clientId);
 
       return {
         candidateId: candidate.id,
@@ -6823,19 +6863,59 @@ function getOnboardedRevenueRows() {
         recruiter: placement?.recruiter || candidate.recruiter || "Unassigned",
         jobId: placement?.jobId || candidate.jobId || "",
         jobTitle: job?.title || candidate.jobId || "Unassigned",
+        clientId,
+        clientName: client?.name || "",
         date: placement?.date || todayISO(),
+        engagementType,
+        projectStartDate,
+        projectEndDate,
+        contractStatus: engagementType === "Contractual" ? (projectEndDate ? "Completed" : "Active") : "Permanent",
         revenue,
         cost,
         margin,
         marginPercent: revenue ? Math.round((margin / revenue) * 100) : 0
       };
     })
-    .filter((row) => inSelectedPeriod(row.date) && matchesSearch(`${row.candidateName} ${row.recruiter} ${row.jobTitle}`))
-    .sort((a, b) => b.date.localeCompare(a.date) || a.candidateName.localeCompare(b.candidateName));
+    .filter((row) => inSelectedPeriod(row.projectEndDate || row.projectStartDate || row.date) && matchesSearch(`${row.candidateName} ${row.recruiter} ${row.jobTitle}`))
+    .sort((a, b) => String(b.projectEndDate || b.projectStartDate || b.date).localeCompare(String(a.projectEndDate || a.projectStartDate || a.date)) || a.candidateName.localeCompare(b.candidateName));
+}
+
+function getContractualRevenueByTa(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const recruiter = row.recruiter || "Unassigned";
+    const current = grouped.get(recruiter) || { recruiter, activeProjects: 0, completedProjects: 0, revenue: 0, cost: 0, margin: 0 };
+    current.activeProjects += row.contractStatus === "Active" ? 1 : 0;
+    current.completedProjects += row.contractStatus === "Completed" ? 1 : 0;
+    current.revenue += Number(row.revenue || 0);
+    current.cost += Number(row.cost || 0);
+    current.margin += Number(row.margin || 0);
+    grouped.set(recruiter, current);
+  });
+  return Array.from(grouped.values())
+    .map((row) => ({ ...row, marginPercent: row.revenue ? Math.round((row.margin / row.revenue) * 100) : 0 }))
+    .sort((left, right) => right.revenue - left.revenue || left.recruiter.localeCompare(right.recruiter));
 }
 
 function findPlacementForCandidate(candidateId) {
   return state.placements.find((placement) => String(placement.candidateId) === String(candidateId));
+}
+
+function getPlacementEngagementType(placement, job, candidate) {
+  const explicit = String(placement?.engagementType || "").trim().toLowerCase();
+  if (explicit === "contractual") return "Contractual";
+  if (explicit === "fte") return "FTE";
+  const resolvedJob = job || findById(state.jobs, placement?.jobId || candidate?.jobId || "");
+  if (normalizeJobType(resolvedJob?.jobType) !== "FTE") return "Contractual";
+  return normalizeClosureType(candidate?.closureType) === "Contractual" ? "Contractual" : "FTE";
+}
+
+function getPlacementRecognitionDate(placement) {
+  return String(placement?.projectEndDate || placement?.endDate || placement?.projectStartDate || placement?.startDate || placement?.date || "");
+}
+
+function getPlacementRevenue(placement) {
+  return Number(placement?.revenue || 0);
 }
 
 function calculatePlacementCost(placement) {
@@ -6843,7 +6923,7 @@ function calculatePlacementCost(placement) {
   const explicitCost = Number(placement.cost || 0);
   if (Number.isFinite(explicitCost) && explicitCost > 0) return explicitCost;
 
-  const revenue = Number(placement.revenue || 0);
+  const revenue = getPlacementRevenue(placement);
   const explicitMargin = Number(placement.margin);
   if (Number.isFinite(explicitMargin)) return Math.max(0, revenue - explicitMargin);
   return 0;
@@ -6851,7 +6931,7 @@ function calculatePlacementCost(placement) {
 
 function calculatePlacementMargin(placement) {
   if (!placement) return 0;
-  const revenue = Number(placement.revenue || 0);
+  const revenue = getPlacementRevenue(placement);
   const explicitMargin = Number(placement.margin);
   if (Number.isFinite(explicitMargin)) return explicitMargin;
   return revenue - calculatePlacementCost(placement);
@@ -6903,34 +6983,66 @@ function savePlacementFinanceRow(candidateId) {
 
   const revenueInput = findFinanceInput("revenue", candidate.id);
   const costInput = findFinanceInput("cost", candidate.id);
+  const startDateInput = findFinanceInput("projectStartDate", candidate.id);
+  const endDateInput = findFinanceInput("projectEndDate", candidate.id);
+  const clientInput = findFinanceInput("clientId", candidate.id);
   const revenue = normalizeMoneyValue(revenueInput?.value);
   const cost = normalizeMoneyValue(costInput?.value);
   const margin = revenue - cost;
   let placement = findPlacementForCandidate(candidate.id);
+  const job = findById(state.jobs, placement?.jobId || candidate.jobId);
+  const engagementType = getPlacementEngagementType(placement, job, candidate);
+  const projectStartDate = String(startDateInput?.value || placement?.projectStartDate || placement?.startDate || placement?.date || "").trim();
+  const projectEndDate = String(endDateInput?.value || "").trim();
+  const clientId = String(clientInput?.value || placement?.clientId || "").trim();
+
+  if (!clientId || !findById(state.clients, clientId)) {
+    alert("Assign a valid client before saving deployed candidate finance.");
+    return;
+  }
+
+  if (engagementType === "Contractual" && !projectStartDate) {
+    alert("A contractual placement needs its project start date before finance can be saved.");
+    return;
+  }
+  if (projectEndDate && projectStartDate && projectEndDate < projectStartDate) {
+    alert("Project end date cannot be earlier than the start date.");
+    return;
+  }
 
   if (!placement) {
     placement = {
       id: uid("plc"),
       candidateId: candidate.id,
       jobId: candidate.jobId || "",
+      clientId,
       recruiter: candidate.recruiter || getCurrentUser()?.name || "Unassigned",
       revenue: 0,
       cost: 0,
       margin: 0,
-      date: todayISO()
+      date: todayISO(),
+      engagementType,
+      projectStartDate: engagementType === "Contractual" ? projectStartDate || todayISO() : "",
+      projectEndDate: ""
     };
     state.placements.push(placement);
   }
 
   placement.jobId = placement.jobId || candidate.jobId || "";
+  placement.clientId = clientId;
   placement.recruiter = candidate.recruiter || placement.recruiter || "Unassigned";
+  placement.engagementType = engagementType;
+  if (engagementType === "Contractual") {
+    placement.projectStartDate = projectStartDate;
+    placement.projectEndDate = projectEndDate;
+  }
   placement.revenue = revenue;
   placement.cost = cost;
   placement.margin = margin;
-  placement.date = placement.date || todayISO();
+  placement.date = placement.date || projectStartDate || todayISO();
   candidate.stage = "Onboarded";
 
-  recordActivity("revenue", `Revenue updated for ${candidate.name}: ${formatCurrency(revenue)}, margin ${formatCurrency(margin)}`);
+  recordActivity("revenue", `${engagementType === "Contractual" ? "Contractual project" : "Placement"} finance updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · completed ${projectEndDate}` : ""}`);
   saveAndRender();
 }
 
@@ -6962,7 +7074,7 @@ function getClosureTrackerMetrics(candidates) {
       type,
       ytd: ytdRows.length,
       mtd: mtdRows.length,
-      revenue: ytdRows.reduce((acc, candidate) => acc + Number(findPlacementForCandidate(candidate.id)?.revenue || 0), 0),
+        revenue: ytdRows.reduce((acc, candidate) => acc + getPlacementRevenue(findPlacementForCandidate(candidate.id)), 0),
       margin: ytdRows.reduce((acc, candidate) => acc + calculatePlacementMargin(findPlacementForCandidate(candidate.id)), 0)
     };
   });
@@ -7012,7 +7124,7 @@ function getStepConversion(candidates, stage) {
 
 function getCandidateClosureDate(candidate) {
   const placement = findPlacementForCandidate(candidate?.id);
-  return placement?.date || candidate?.onboardedAt || candidate?.updatedAt || candidate?.createdAt || "";
+  return getPlacementRecognitionDate(placement) || candidate?.onboardedAt || candidate?.updatedAt || candidate?.createdAt || "";
 }
 
 function getCandidateTrackingDate(candidate, type) {
@@ -7700,7 +7812,7 @@ function getOperationalCommandCenter(candidates, jobs) {
       { label: "Duplicate Reviews", value: duplicatePending, help: "Merge or ignore duplicates", section: "bulk-upload", tone: duplicatePending ? "yellow" : "green" },
       { label: "Stuck Candidates", value: staleCandidates, help: "No update in 7+ days", section: "pipeline", tone: staleCandidates ? "yellow" : "green" },
       { label: "Open Jobs", value: openJobs, help: "Active hiring demand", section: "jobs", tone: "blue" },
-      { label: "Revenue View", value: formatCurrency(filteredPlacements().reduce((acc, item) => acc + Number(item.revenue || 0), 0)), help: "Founder finance", section: "revenue", tone: "green" },
+      { label: "Revenue View", value: formatCurrency(filteredPlacements().reduce((acc, item) => acc + getPlacementRevenue(item), 0)), help: "Founder finance", section: "revenue", tone: "green" },
       { label: "Team Tracking", value: getRecruiterPerformanceRows().length, help: "Recruiter performance", section: "team-dashboard", tone: "blue" }
     ];
   }
@@ -7761,6 +7873,11 @@ function canCurrentUserWriteRecords() {
 
 function canCurrentUserAccessFounderWorkspace() {
   return canUserAccessFounderWorkspace(getCurrentUser());
+}
+
+function canCurrentUserAccessExecutiveFinance() {
+  const role = normalizeUserRole(getCurrentUser()?.role);
+  return role === "CEO" || role === "Managing Director";
 }
 
 function canUserAccessFounderWorkspace(user) {
@@ -7888,6 +8005,7 @@ function openStageMovementDialog(candidateId, nextStage) {
   const previousContext = getPreviousStageContext(candidate);
   const currentUser = getCurrentUser();
   const isPoolMovement = targetStage === "Pool";
+  const isOnboarding = targetStage === "Onboarded";
 
   el.recordDialog.dataset.entity = "stage-movement";
   el.recordDialog.dataset.candidateId = candidate.id;
@@ -7921,13 +8039,13 @@ function openStageMovementDialog(candidateId, nextStage) {
       <input id="stage_move_time" name="movementTime" type="time" value="${escapeHtml(now.toTimeString().slice(0, 5))}" required />
     </div>
     <div class="dialog-field">
-      <label for="stage_client">Client${isPoolMovement ? " (Optional)" : " *"}</label>
+      <label for="stage_client">${isOnboarding ? "Deployment Client" : "Client"}${isPoolMovement ? " (Optional)" : " *"}</label>
       <select id="stage_client" name="clientId" ${isPoolMovement ? "" : "required"}>
         <option value="">Select client</option>
         ${state.clients
           .map((client) => `<option value="${escapeHtml(client.id)}" ${candidate.jobId && findById(state.jobs, candidate.jobId)?.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`)
           .join("")}
-        <option value="__manual__">Manual / Not in system</option>
+        ${isOnboarding ? "" : '<option value="__manual__">Manual / Not in system</option>'}
       </select>
     </div>
     <div class="dialog-field">
@@ -8340,14 +8458,205 @@ function formatShortDate(value) {
   return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
+function getExecutiveBusinessAnalytics() {
+  const quarters = new Map();
+  const ta = new Map();
+  const clients = new Map();
+  let activeContractProjects = 0;
+  let completedContractProjects = 0;
+
+  state.placements.forEach((placement) => {
+    const recognitionDate = getPlacementRecognitionDate(placement);
+    const quarter = getQuarterBucket(recognitionDate);
+    const candidate = findById(state.candidates, placement.candidateId);
+    const job = findById(state.jobs, placement.jobId);
+    const engagementType = getPlacementEngagementType(placement, job, candidate);
+    const revenue = getPlacementRevenue(placement);
+    const cost = calculatePlacementCost(placement);
+    const margin = revenue - cost;
+
+    if (engagementType === "Contractual") {
+      if (placement.projectEndDate || placement.endDate) completedContractProjects += 1;
+      else activeContractProjects += 1;
+    }
+
+    if (quarter) {
+      const current = quarters.get(quarter.key) || { ...quarter, revenue: 0, cost: 0, margin: 0, projects: 0 };
+      current.revenue += revenue;
+      current.cost += cost;
+      current.margin += margin;
+      current.projects += 1;
+      quarters.set(quarter.key, current);
+    }
+
+    const recruiter = String(placement.recruiter || candidate?.recruiter || "Unassigned");
+    const taRow = ta.get(recruiter) || { recruiter, revenue: 0, cost: 0, margin: 0, projects: 0 };
+    taRow.revenue += revenue;
+    taRow.cost += cost;
+    taRow.margin += margin;
+    taRow.projects += 1;
+    ta.set(recruiter, taRow);
+
+    const client = findById(state.clients, placement.clientId || "");
+    const clientName = String(client?.name || placement.clientName || "Unassigned client — action required");
+    const clientKey = String(client?.id || placement.clientId || "unassigned-client");
+    const clientRow = clients.get(clientKey) || {
+      client: clientName,
+      revenue: 0,
+      cost: 0,
+      margin: 0,
+      projects: 0,
+      contractualProjects: 0,
+      completedContractProjects: 0
+    };
+    clientRow.revenue += revenue;
+    clientRow.cost += cost;
+    clientRow.margin += margin;
+    clientRow.projects += 1;
+    if (engagementType === "Contractual") {
+      clientRow.contractualProjects += 1;
+      if (placement.projectEndDate || placement.endDate) clientRow.completedContractProjects += 1;
+    }
+    clients.set(clientKey, clientRow);
+  });
+
+  const allSeries = Array.from(quarters.values()).sort((left, right) => left.order - right.order);
+  const series = allSeries.slice(-8);
+  const latest = series[series.length - 1] || null;
+  const priorQuarter = latest ? allSeries.find((item) => item.order === latest.order - 1) || null : null;
+  const sameQuarterLastYear = latest ? allSeries.find((item) => item.order === latest.order - 4) || null : null;
+  const taRows = Array.from(ta.values())
+    .map((row) => ({ ...row, marginPercent: row.revenue ? Math.round((row.margin / row.revenue) * 100) : 0 }))
+    .sort((left, right) => right.revenue - left.revenue || left.recruiter.localeCompare(right.recruiter))
+    .slice(0, 8);
+  const totalClientRevenue = Array.from(clients.values()).reduce((sum, row) => sum + row.revenue, 0);
+  const clientRows = Array.from(clients.values())
+    .map((row) => ({
+      ...row,
+      revenueShare: totalClientRevenue ? (row.revenue / totalClientRevenue) * 100 : 0,
+      marginPercent: row.revenue ? Math.round((row.margin / row.revenue) * 100) : 0
+    }))
+    .sort((left, right) => right.revenue - left.revenue || left.client.localeCompare(right.client));
+
+  return {
+    series,
+    latest,
+    qoqRevenue: calculateGrowth(latest?.revenue, priorQuarter?.revenue),
+    qoqMargin: calculateGrowth(latest?.margin, priorQuarter?.margin),
+    yoyRevenue: calculateGrowth(latest?.revenue, sameQuarterLastYear?.revenue),
+    yoyMargin: calculateGrowth(latest?.margin, sameQuarterLastYear?.margin),
+    activeContractProjects,
+    completedContractProjects,
+    taRows,
+    clientRows
+  };
+}
+
+function getQuarterBucket(value) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getFullYear();
+  const quarter = Math.floor(date.getMonth() / 3) + 1;
+  return { key: `${year}-Q${quarter}`, label: `Q${quarter} ${year}`, order: year * 4 + quarter };
+}
+
+function calculateGrowth(current, previous) {
+  const currentValue = Number(current);
+  const previousValue = Number(previous);
+  if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue) || previousValue === 0) return null;
+  return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+}
+
+function formatGrowth(value) {
+  if (!Number.isFinite(Number(value))) return "Need comparison data";
+  const rounded = Math.round(Number(value));
+  return `${rounded >= 0 ? "+" : ""}${rounded}%`;
+}
+
+function renderExecutiveBusinessGrowth() {
+  if (!canCurrentUserAccessExecutiveFinance()) return "";
+  const analytics = getExecutiveBusinessAnalytics();
+  const latestLabel = analytics.latest?.label || "No completed quarter";
+  const revenueRows = analytics.series.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} project${row.projects === 1 ? "" : "s"}` }));
+  const marginRows = analytics.series.map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) }));
+  const taRows = analytics.taRows.map((row) => ({ label: row.recruiter, value: row.revenue, meta: `${row.projects} project${row.projects === 1 ? "" : "s"} · ${formatPercent(row.marginPercent)} margin` }));
+  const clientRows = analytics.clientRows.map((row) => ({
+    label: row.client,
+    value: row.revenue,
+    meta: `${formatPercent(row.revenueShare)} of revenue · ${row.projects} project${row.projects === 1 ? "" : "s"} · ${formatPercent(row.marginPercent)} margin`
+  }));
+  const topClient = analytics.clientRows[0] || null;
+
+  return `
+    <section class="panel executive-growth-panel">
+      <div class="section-heading-row">
+        <div>
+          <p class="panel-kicker">CEO & Managing Director only</p>
+          <h2 class="panel-title">Executive Business Growth</h2>
+          <p class="panel-subtitle">Actual placement revenue and delivery margin by completed recognition date. The latest period is ${escapeHtml(latestLabel)}.</p>
+        </div>
+        <span class="executive-access-badge">Executive finance</span>
+      </div>
+      <div class="metrics-grid executive-growth-metrics">
+        ${metricCard(`${latestLabel} Revenue`, formatCurrency(analytics.latest?.revenue || 0))}
+        ${metricCard("Revenue QoQ", formatGrowth(analytics.qoqRevenue))}
+        ${metricCard("Revenue YoY", formatGrowth(analytics.yoyRevenue))}
+        ${metricCard("Margin QoQ", formatGrowth(analytics.qoqMargin))}
+        ${metricCard("Top Client Revenue Share", topClient ? formatPercent(topClient.revenueShare) : "No client data")}
+        ${metricCard("Active Contract Projects", analytics.activeContractProjects)}
+        ${metricCard("Completed Contract Projects", analytics.completedContractProjects)}
+      </div>
+      <div class="graph-grid executive-growth-charts">
+        ${horizontalChart("Quarterly Revenue", "Actual revenue by recognition quarter", revenueRows, formatCurrency)}
+        ${horizontalChart("Quarterly Margin", "Gross margin by recognition quarter", marginRows, formatCurrency)}
+        ${horizontalChart("TA Revenue Contribution", "Actual revenue attributed to each TA", taRows, formatCurrency)}
+        ${horizontalChart("Client Revenue Contribution", "Actual revenue share and margin by client", clientRows.slice(0, 8), formatCurrency)}
+        ${horizontalChart("Contract Project Health", "Active versus completed contractual projects", [
+          { label: "Active", value: analytics.activeContractProjects, meta: "No end date recorded" },
+          { label: "Completed", value: analytics.completedContractProjects, meta: "End date recorded" }
+        ])}
+      </div>
+      <div class="table-wrap executive-client-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Projects</th>
+              <th>Contractual</th>
+              <th>Revenue</th>
+              <th>Cost</th>
+              <th>Margin</th>
+              <th>Revenue Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              analytics.clientRows.length
+                ? analytics.clientRows
+                    .map(
+                      (row) => `<tr><td>${escapeHtml(row.client)}</td><td>${row.projects}</td><td>${row.contractualProjects}${row.contractualProjects ? ` <span class="muted-cell">(${row.completedContractProjects} completed)</span>` : ""}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.cost)}</td><td>${formatCurrency(row.margin)}<br /><span class="muted-cell">${formatPercent(row.marginPercent)} margin</span></td><td>${formatPercent(row.revenueShare)}</td></tr>`
+                    )
+                    .join("")
+                : `<tr><td colspan="7" class="empty">No client contribution data available.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function renderRevenueSection() {
+  if (!canCurrentUserAccessExecutiveFinance()) {
+    return `<section class="panel"><h2 class="panel-title">Executive finance access required</h2><p class="panel-subtitle">Business growth, revenue, margin, and project performance are available only to the CEO and Managing Director.</p></section>`;
+  }
   const placements = filteredPlacements();
-  const revenueTotal = placements.reduce((acc, item) => acc + Number(item.revenue || 0), 0);
+  const revenueTotal = placements.reduce((acc, item) => acc + getPlacementRevenue(item), 0);
   const costTotal = placements.reduce((acc, item) => acc + calculatePlacementCost(item), 0);
   const marginTotal = revenueTotal - costTotal;
   const thisMonthRevenue = placements
-    .filter((item) => isCurrentMonth(item.date))
-    .reduce((acc, item) => acc + Number(item.revenue || 0), 0);
+    .filter((item) => isCurrentMonth(getPlacementRecognitionDate(item)))
+    .reduce((acc, item) => acc + getPlacementRevenue(item), 0);
 
   return `
     <section class="panel">
@@ -8359,6 +8668,8 @@ function renderRevenueSection() {
         ${metricCard("Placements", placements.length)}
       </div>
     </section>
+
+    ${renderExecutiveBusinessGrowth()}
 
     <section class="panel">
       <h2 class="panel-title">Placement Revenue</h2>
@@ -8382,8 +8693,9 @@ function renderRevenueSection() {
                     const candidate = findById(state.candidates, item.candidateId);
                     const job = findById(state.jobs, item.jobId);
                     const margin = calculatePlacementMargin(item);
-                    const marginPercent = Number(item.revenue || 0) ? Math.round((margin / Number(item.revenue || 0)) * 100) : 0;
-                    return `<tr><td>${escapeHtml(candidate?.name || item.candidateId)}</td><td>${escapeHtml(job?.title || item.jobId)}</td><td>${escapeHtml(item.recruiter)}</td><td>${escapeHtml(item.date)}</td><td>${formatCurrency(item.revenue)}</td><td>${formatCurrency(calculatePlacementCost(item))}</td><td>${formatCurrency(margin)}<br /><span class="muted-cell">${formatPercent(marginPercent)}</span></td></tr>`;
+                    const revenue = getPlacementRevenue(item);
+                    const marginPercent = revenue ? Math.round((margin / revenue) * 100) : 0;
+                    return `<tr><td>${escapeHtml(candidate?.name || item.candidateId)}</td><td>${escapeHtml(job?.title || item.jobId)}</td><td>${escapeHtml(item.recruiter)}</td><td>${escapeHtml(getPlacementRecognitionDate(item))}</td><td>${formatCurrency(revenue)}</td><td>${formatCurrency(calculatePlacementCost(item))}</td><td>${formatCurrency(margin)}<br /><span class="muted-cell">${formatPercent(marginPercent)}</span></td></tr>`;
                   })
                   .join("")
               : `<tr><td colspan="7" class="empty">No revenue data available.</td></tr>`}
@@ -9523,6 +9835,24 @@ async function moveCandidateStage(candidateId, nextStage, movement = {}) {
     stage
   };
   appendCandidateStageHistory(updated, oldStage, stage, movement);
+  if (stage === "Onboarded") {
+    const deploymentClientId = String(movement.clientId || "").trim();
+    const deploymentClient = findById(state.clients, deploymentClientId);
+    if (!deploymentClientId || !deploymentClient) {
+      alert("A valid deployment client is required before onboarding a candidate.");
+      renderSection();
+      return;
+    }
+    updated.parsedData = {
+      ...(updated.parsedData && typeof updated.parsedData === "object" ? updated.parsedData : {}),
+      deployment: {
+        clientId: deploymentClientId,
+        clientName: deploymentClient.name,
+        assignedAt: new Date().toISOString(),
+        assignedBy: getCurrentUser()?.name || "System"
+      }
+    };
+  }
 
   if (!ui.api.connected) {
     alert("Pipeline movement requires the backend database. No local-only stage change was saved.");
@@ -9556,6 +9886,34 @@ async function moveCandidateStage(candidateId, nextStage, movement = {}) {
   }
 
   upsertCandidateInState(updated);
+  if (stage === "Onboarded") {
+    const deployment = updated.parsedData?.deployment && typeof updated.parsedData.deployment === "object" ? updated.parsedData.deployment : {};
+    const clientId = String(deployment.clientId || movement.clientId || "").trim();
+    const client = findById(state.clients, clientId);
+    let placement = findPlacementForCandidate(updated.id);
+    if (!placement) {
+      placement = {
+        id: uid("plc"),
+        candidateId: updated.id,
+        jobId: String(movement.jobId || updated.jobId || ""),
+        clientId,
+        recruiter: updated.recruiter || movement.recruiter || getCurrentUser()?.name || "Unassigned",
+        revenue: 0,
+        cost: 0,
+        margin: 0,
+        date: String(movement.movementDate || todayISO()),
+        engagementType: getPlacementEngagementType(null, findById(state.jobs, movement.jobId || updated.jobId), updated),
+        projectStartDate: "",
+        projectEndDate: ""
+      };
+      state.placements.push(placement);
+    } else {
+      placement.clientId = clientId;
+      placement.jobId = placement.jobId || String(movement.jobId || updated.jobId || "");
+      placement.recruiter = placement.recruiter || updated.recruiter || movement.recruiter || "Unassigned";
+    }
+    placement.clientName = client?.name || "";
+  }
   invalidateCandidateDecisionTimeline(updated.id);
   if (ui.candidates.selectedId === updated.id) {
     ui.candidates.editDraft = candidateDraftFromRecord(updated);
@@ -9568,6 +9926,10 @@ async function moveCandidateStage(candidateId, nextStage, movement = {}) {
     remarks: movement.feedback || movement.reason || "",
     nextFollowUpDate: movement.nextFollowUpDate || ""
   });
+  if (stage === "Onboarded") {
+    await saveAndRenderSyncNow("Candidate onboarded with client assignment and synced.");
+    return;
+  }
   saveAndRender();
 }
 
@@ -9606,6 +9968,13 @@ async function submitStageMovementDialog(data) {
   if (!isPoolMovement) {
     requiredFields.push(["Job", movement.jobId || data.jobId]);
     requiredFields.push(["Next Follow-up Date", movement.nextFollowUpDate]);
+  }
+  if (nextStage === "Onboarded") {
+    requiredFields.push(["Deployment client", movement.clientId]);
+    if (!findById(state.clients, movement.clientId)) {
+      alert("Choose a valid client from the organisation before onboarding this candidate.");
+      return;
+    }
   }
   const missing = requiredFields.filter(([, value]) => !String(value || "").trim());
 
@@ -10133,7 +10502,7 @@ function filteredInterviews() {
 
 function filteredPlacements() {
   return state.placements.filter(
-    (item) => canCurrentUserAccessPlacement(item) && inSelectedPeriod(item.date) && matchesSearch(`${item.recruiter} ${item.candidateId} ${item.jobId}`)
+    (item) => canCurrentUserAccessPlacement(item) && inSelectedPeriod(getPlacementRecognitionDate(item)) && matchesSearch(`${item.recruiter} ${item.candidateId} ${item.jobId}`)
   );
 }
 
@@ -12899,15 +13268,21 @@ function sanitizeStateForBrowserStorage(value) {
 
 function normalizeState(value) {
   const source = value && typeof value === "object" ? value : {};
+  const jobs = normalizeJobs(source.jobs);
+  const placements = normalizePlacements(source.placements).map((placement) => {
+    if (placement.clientId) return placement;
+    const job = jobs.find((item) => item.id === placement.jobId);
+    return job?.clientId ? { ...placement, clientId: job.clientId } : placement;
+  });
 
   return {
     bulkUpload: normalizeBulkUpload(source.bulkUpload),
     users: normalizeUsers(source.users),
     candidates: normalizeCandidates(source.candidates),
     clients: normalizeClients(source.clients),
-    jobs: normalizeJobs(source.jobs),
+    jobs,
     interviews: normalizeInterviews(source.interviews),
-    placements: normalizePlacements(source.placements),
+    placements,
     activities: normalizeActivities(source.activities)
   };
 }
@@ -13152,7 +13527,12 @@ function normalizePlacements(items) {
       id: String(item.id),
       candidateId: String(item.candidateId || ""),
       jobId: String(item.jobId || ""),
+      clientId: String(item.clientId || ""),
+      clientName: String(item.clientName || ""),
       recruiter: String(item.recruiter || "Unassigned"),
+      engagementType: String(item.engagementType || ""),
+      projectStartDate: String(item.projectStartDate || item.startDate || ""),
+      projectEndDate: String(item.projectEndDate || item.endDate || ""),
       revenue: Number(item.revenue || 0),
       cost: normalizeMoneyValue(item.cost),
       margin:
