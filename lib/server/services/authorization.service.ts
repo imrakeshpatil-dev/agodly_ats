@@ -161,9 +161,11 @@ class AuthorizationService {
       if (this.canViewRevenue(context)) return snapshot;
       return {
         ...snapshot,
+        users: snapshot.users.map((user) => omitFields(user, ["revenueTarget"])),
         placements: snapshot.placements.map((placement) =>
           omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])
-        )
+        ),
+        activities: snapshot.activities.filter((activity) => !isFinancialActivity(activity))
       };
     }
 
@@ -176,11 +178,13 @@ class AuthorizationService {
       .map((placement) => this.canViewRevenue(context)
         ? placement
         : omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"]));
-    const activities = snapshot.activities.filter((activity) => this.canViewActivity(context, activity, candidates));
+    const activities = snapshot.activities.filter((activity) =>
+      this.canViewActivity(context, activity, candidates) && !isFinancialActivity(activity)
+    );
     const users = snapshot.users.filter((user) => {
       const id = normalize(user.id);
       return Boolean(id && context.visibleUserIds.has(id));
-    });
+    }).map((user) => omitFields(user, ["revenueTarget"]));
 
     return {
       ...snapshot,
@@ -200,7 +204,17 @@ class AuthorizationService {
     payload: AppStateStorePayload,
     permittedCandidates: CandidateRecord[]
   ): AppStateStorePayload {
-    if (isFounderRole(context.user.role)) return payload;
+    if (isFounderRole(context.user.role)) {
+      if (this.canViewRevenue(context)) return payload;
+      return {
+        ...payload,
+        users: payload.users?.map((user) => omitFields(user, ["revenueTarget"])),
+        placements: payload.placements?.map((placement) =>
+          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])
+        ),
+        activities: payload.activities?.filter((activity) => !isFinancialActivity(activity))
+      };
+    }
 
     return {
       clients: context.user.role === "TA Manager"
@@ -208,8 +222,12 @@ class AuthorizationService {
         : undefined,
       jobs: payload.jobs?.filter((job) => this.canEditJob(context, job)),
       interviews: payload.interviews?.filter((interview) => this.canViewInterview(context, interview, permittedCandidates)),
-      placements: payload.placements?.filter((placement) => this.canEditSubmission(context, placement, permittedCandidates)),
-      activities: payload.activities?.filter((activity) => this.canViewActivity(context, activity, permittedCandidates))
+      placements: payload.placements
+        ?.filter((placement) => this.canEditSubmission(context, placement, permittedCandidates))
+        .map((placement) => omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])),
+      activities: payload.activities?.filter((activity) =>
+        this.canViewActivity(context, activity, permittedCandidates) && !isFinancialActivity(activity)
+      )
     };
   }
 
@@ -305,6 +323,13 @@ const omitFields = (record: AtsRecord, fields: string[]): AtsRecord => {
   const sanitized = { ...record };
   fields.forEach((field) => delete sanitized[field]);
   return sanitized;
+};
+
+const isFinancialActivity = (record: AtsRecord): boolean => {
+  const classification = [record.type, record.module, record.action]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join(" ");
+  return /\b(revenue|margin|finance|billing|cost)\b/.test(classification);
 };
 
 const toRecord = (value: unknown): AtsRecord | null =>

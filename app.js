@@ -3249,6 +3249,7 @@ function renderDashboardSection() {
   const placements = filteredPlacements();
   const currentUser = getCurrentUser();
   const isFounder = canCurrentUserAccessFounderWorkspace();
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
 
   const totalCandidates = candidates.length;
   const totalJobs = jobs.length;
@@ -3308,15 +3309,15 @@ function renderDashboardSection() {
         ${metricCard("Total Jobs", totalJobs)}
         ${metricCard("Submitted This Month", submittedThisMonth)}
         ${metricCard("Joined This Month", joinedThisMonth)}
-        ${metricCard("Total Revenue", formatCurrency(totalRevenue))}
-        ${metricCard("Total Margin", formatCurrency(totalMargin))}
+        ${canViewFinance ? metricCard("Total Revenue", formatCurrency(totalRevenue)) : ""}
+        ${canViewFinance ? metricCard("Total Margin", formatCurrency(totalMargin)) : ""}
       </div>
     </section>
 
     ${renderRecruiterDailyWorkspace(candidates)}
     ${renderClosureTrackerPanel(closureTracker)}
-    ${isFounder ? renderTargetAchievementTracker() : renderRecruiterDashboardPerformance()}
-    ${renderOnboardedRevenueTracker()}
+    ${canViewFinance ? renderTargetAchievementTracker() : renderRecruiterDashboardPerformance()}
+    ${canViewFinance ? renderOnboardedRevenueTracker() : ""}
 
     <section class="panel">
       <h2 class="panel-title">${isFounder ? "Operations Alerts" : "My Daily Queue"}</h2>
@@ -3538,6 +3539,7 @@ function diagnosticTile(label, value) {
 }
 
 function renderTargetAchievementTracker() {
+  if (!canCurrentUserAccessExecutiveFinance()) return "";
   const rows = getRecruiterPerformanceRows();
   const totalCandidateTarget = rows.reduce((acc, item) => acc + Number(item.monthlyTarget || 0), 0);
   const totalCandidates = rows.reduce((acc, item) => acc + item.candidates, 0);
@@ -3644,6 +3646,7 @@ function renderTargetAchievementTracker() {
 }
 
 function renderRecruiterDashboardPerformance() {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const currentUser = getCurrentUser();
   const ranked = rankRecruiterPerformanceRows(
     getRecruiterPerformanceRows({ includeAll: true, currentMonthOnly: true, ignoreSearch: true })
@@ -3698,7 +3701,7 @@ function renderRecruiterDashboardPerformance() {
         ${metricCard("Candidates Added", row.candidates)}
         ${metricCard("Submitted", row.submitted)}
         ${metricCard("Joined", row.joined)}
-        ${metricCard("Revenue Target", formatCurrency(row.revenueTarget))}
+        ${canViewFinance ? metricCard("Revenue Target", formatCurrency(row.revenueTarget)) : ""}
         ${metricCard("Leaderboard Rank", `#${rank} / ${ranked.length}`)}
       </div>
 
@@ -3714,7 +3717,7 @@ function renderRecruiterDashboardPerformance() {
             <span class="muted-cell">${formatPercent(row.targetAttainment)} complete</span>
           </div>
         </article>
-        <article class="chart-card">
+        ${canViewFinance ? `<article class="chart-card">
           <div class="chart-card-head">
             <h3>Revenue target</h3>
             <p>${formatCurrency(row.revenue)} achieved · ${formatCurrency(revenueRemaining)} remaining</p>
@@ -3724,7 +3727,7 @@ function renderRecruiterDashboardPerformance() {
             ${progressBar(row.revenueAttainment)}
             <span class="muted-cell">${formatPercent(row.revenueAttainment)} complete</span>
           </div>
-        </article>
+        </article>` : ""}
       </div>
 
       <div class="table-wrap recruiter-nearby-standings">
@@ -3769,6 +3772,7 @@ function renderRecruiterDashboardPerformance() {
 }
 
 function renderOnboardedRevenueTracker() {
+  if (!canCurrentUserAccessExecutiveFinance()) return "";
   const rows = getOnboardedRevenueRows();
   const missingClientAssignments = rows.filter((row) => !row.clientId);
   const totalRevenue = rows.reduce((acc, item) => acc + item.revenue, 0);
@@ -3895,6 +3899,7 @@ function renderOnboardedRevenueTracker() {
 }
 
 function renderClosureTrackerPanel(metrics) {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const rows = metrics.byType;
   const stageRows = metrics.stageSteps;
   const ratingRows = metrics.ratingRows;
@@ -3938,8 +3943,7 @@ function renderClosureTrackerPanel(metrics) {
               <th>Closure Type</th>
               <th>MTD</th>
               <th>YTD</th>
-              <th>Revenue</th>
-              <th>Margin</th>
+              ${canViewFinance ? "<th>Revenue</th><th>Margin</th>" : ""}
             </tr>
           </thead>
           <tbody>
@@ -3950,8 +3954,7 @@ function renderClosureTrackerPanel(metrics) {
                     <td><strong>${escapeHtml(row.type)}</strong></td>
                     <td>${row.mtd}</td>
                     <td>${row.ytd}</td>
-                    <td>${formatCurrency(row.revenue)}</td>
-                    <td>${formatCurrency(row.margin)}</td>
+                    ${canViewFinance ? `<td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.margin)}</td>` : ""}
                   </tr>
                 `
               )
@@ -6099,6 +6102,7 @@ function renderBulkImportPreview() {
 }
 
 function renderUsersSection() {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const users = filteredUsers();
   const activeUsers = users.filter((item) => normalizeUserStatus(item.status) === "Active").length;
   const inactiveUsers = users.filter((item) => normalizeUserStatus(item.status) === "Inactive").length;
@@ -6145,7 +6149,7 @@ function renderUsersSection() {
               <th>Team</th>
               <th>Manager</th>
               <th>Candidate Target</th>
-              <th>Revenue Target</th>
+              ${canViewFinance ? "<th>Revenue Target</th>" : ""}
               <th>Status</th>
               <th>Password</th>
               <th>Created</th>
@@ -6168,7 +6172,7 @@ function renderUsersSection() {
                         <td>${escapeHtml(user.team || "Unassigned")}</td>
                         <td>${renderUserManagerCell(user)}</td>
                         <td>${Number(user.monthlyTarget || 0) || "-"}</td>
-                        <td>${formatCurrency(user.revenueTarget || 0)}</td>
+                        ${canViewFinance ? `<td>${formatCurrency(user.revenueTarget || 0)}</td>` : ""}
                         <td>${statusBadge(status)}</td>
                         <td>${environmentManaged ? "Server managed" : user.passwordConfigured ? `Set<br /><span class="muted-small">${escapeHtml(formatShortDate(user.passwordSetAt || user.updatedAt || ""))}</span>` : "Not set"}</td>
                         <td>${escapeHtml(user.createdAt)}</td>
@@ -6195,7 +6199,7 @@ function renderUsersSection() {
                     `;
                   })
                   .join("")
-              : `<tr><td colspan="11" class="empty">No users found. Click Add User to create a login account.</td></tr>`}
+              : `<tr><td colspan="${canViewFinance ? 11 : 10}" class="empty">No users found. Click Add User to create a login account.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -6321,6 +6325,7 @@ function renderUserManagementPanel(user) {
   const draft = ui.users.editDraft;
   const isFounderUser = FOUNDER_ROLES.has(normalizeUserRole(user.role));
   const status = normalizeUserStatus(user.status);
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
 
   return `
     <section class="panel user-management-panel">
@@ -6344,7 +6349,7 @@ function renderUserManagementPanel(user) {
             ${userTextField("Team", "team", draft.team)}
             ${userManagerSelectField(draft, user)}
             ${userTextField("Monthly Candidate Target", "monthlyTarget", draft.monthlyTarget, "number")}
-            ${userTextField("Monthly Revenue Target (INR)", "revenueTarget", draft.revenueTarget, "number")}
+            ${canViewFinance ? userTextField("Monthly Revenue Target (INR)", "revenueTarget", draft.revenueTarget, "number") : ""}
           </div>
           <div class="dialog-actions">
             <button class="tool-btn" type="button" data-action="close-user-editor">Cancel</button>
@@ -6428,6 +6433,7 @@ function renderReportingManagerSelect({ managerId = "", excludedUserId = "", id,
 }
 
 function renderTeamDashboardSection() {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const rows = getRecruiterPerformanceRows();
   const teams = getTeamPerformanceRows(rows);
   const activeUsers = state.users.filter((item) => item.status === "Active");
@@ -6462,7 +6468,7 @@ function renderTeamDashboardSection() {
         ${metricCard("Submissions", totalSubmissions)}
         ${metricCard("Interviews", totalInterviews)}
         ${metricCard("Joined", totalJoined)}
-        ${metricCard("Margin", formatCurrency(totalMargin))}
+        ${canViewFinance ? metricCard("Margin", formatCurrency(totalMargin)) : ""}
       </div>
     </section>
 
@@ -6481,17 +6487,17 @@ function renderTeamDashboardSection() {
 
     <section class="panel">
       <h2 class="panel-title">Team Command Center</h2>
-      <p class="panel-subtitle">Graphical view of team workload, conversion quality, and revenue contribution</p>
+      <p class="panel-subtitle">Graphical view of team workload and conversion quality${canViewFinance ? ", plus revenue contribution" : ""}</p>
       <div class="graph-grid">
         ${horizontalChart("Candidate Load", "Candidates owned by each team", teamChartRows)}
-        ${horizontalChart("Revenue Impact", "Placement revenue by team", revenueChartRows, formatCurrency)}
+        ${canViewFinance ? horizontalChart("Revenue Impact", "Placement revenue by team", revenueChartRows, formatCurrency) : ""}
         ${horizontalChart("Conversion Quality", `Average recruiter conversion: ${formatPercent(avgConversion)}`, conversionChartRows, formatPercent, 100)}
       </div>
     </section>
 
     <section class="panel">
       <h2 class="panel-title">Team Performance</h2>
-      <p class="panel-subtitle">Team-wise output across candidates, submissions, interviews, joins and revenue</p>
+      <p class="panel-subtitle">Team-wise output across candidates, submissions, interviews, and joins${canViewFinance ? ", revenue, and margin" : ""}</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -6503,8 +6509,7 @@ function renderTeamDashboardSection() {
               <th>Interviews</th>
               <th>Joined</th>
               <th>Conversion</th>
-              <th>Revenue</th>
-              <th>Margin</th>
+              ${canViewFinance ? "<th>Revenue</th><th>Margin</th>" : ""}
             </tr>
           </thead>
           <tbody>
@@ -6520,13 +6525,12 @@ function renderTeamDashboardSection() {
                         <td>${team.interviews}</td>
                         <td>${team.joined}</td>
                         <td>${formatPercent(team.conversion)}</td>
-                        <td>${formatCurrency(team.revenue)}</td>
-                        <td>${formatCurrency(team.margin)}<br /><span class="muted-cell">${formatPercent(team.marginPercent)}</span></td>
+                        ${canViewFinance ? `<td>${formatCurrency(team.revenue)}</td><td>${formatCurrency(team.margin)}<br /><span class="muted-cell">${formatPercent(team.marginPercent)}</span></td>` : ""}
                       </tr>
                     `
                   )
                   .join("")
-              : `<tr><td colspan="9" class="empty">No team performance data available.</td></tr>`}
+              : `<tr><td colspan="${canViewFinance ? 9 : 7}" class="empty">No team performance data available.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -6568,13 +6572,14 @@ function renderTeamDashboardSection() {
       <div class="insight-grid">
         <article class="insight-card"><p>Activity Events</p><strong>${state.activities.length}</strong></article>
         <article class="insight-card"><p>Latest Event</p><strong>${escapeHtml(formatShortDate(state.activities[0]?.timestamp || ""))}</strong></article>
-        <article class="insight-card"><p>Revenue Tracked</p><strong>${formatCurrency(totalRevenue)}</strong></article>
+        ${canViewFinance ? `<article class="insight-card"><p>Revenue Tracked</p><strong>${formatCurrency(totalRevenue)}</strong></article>` : ""}
       </div>
     </section>
   `;
 }
 
 function renderRecruiterPerformanceSection() {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const rows = getRecruiterPerformanceRows();
   const ranked = rankRecruiterPerformanceRows(rows);
   const top = ranked[0];
@@ -6605,17 +6610,17 @@ function renderRecruiterPerformanceSection() {
         ${metricCard("Recruiters Tracked", rows.length)}
         ${metricCard("Top Performer", top ? top.name : "-")}
         ${metricCard("At Risk Targets", atRisk)}
-        ${metricCard("Total Revenue", formatCurrency(rows.reduce((acc, item) => acc + item.revenue, 0)))}
-        ${metricCard("Total Margin", formatCurrency(rows.reduce((acc, item) => acc + item.margin, 0)))}
+        ${canViewFinance ? metricCard("Total Revenue", formatCurrency(rows.reduce((acc, item) => acc + item.revenue, 0))) : ""}
+        ${canViewFinance ? metricCard("Total Margin", formatCurrency(rows.reduce((acc, item) => acc + item.margin, 0))) : ""}
         ${metricCard("Avg Conversion", formatPercent(avgConversion))}
       </div>
     </section>
 
     <section class="panel">
       <h2 class="panel-title">Performance Snapshot</h2>
-      <p class="panel-subtitle">Graphical recruiter score, target attainment, and funnel movement</p>
+      <p class="panel-subtitle">Graphical recruiter score, candidate-target attainment, and funnel movement</p>
       <div class="graph-grid">
-        ${horizontalChart("Score Leaderboard", "Weighted by candidates, submissions, interviews, joins and revenue", topScoreRows)}
+        ${horizontalChart("Score Leaderboard", "Weighted by candidates, submissions, interviews, and joins", topScoreRows)}
         ${horizontalChart("Target Attainment", `Average target attainment: ${formatPercent(avgTarget)}`, targetRows, formatPercent, 100)}
         ${horizontalChart("Team Funnel Output", "Total movement across recruiter-owned candidates", stageTotals)}
       </div>
@@ -6639,9 +6644,7 @@ function renderRecruiterPerformanceSection() {
               <th>Joined</th>
               <th>Conversion</th>
               <th>Target</th>
-              <th>Revenue Target</th>
-              <th>Revenue</th>
-              <th>Margin</th>
+              ${canViewFinance ? "<th>Revenue Target</th><th>Revenue</th><th>Margin</th>" : ""}
               <th>Score</th>
             </tr>
           </thead>
@@ -6667,15 +6670,13 @@ function renderRecruiterPerformanceSection() {
                             ${progressBar(item.targetAttainment)}
                           </div>
                         </td>
-                        <td>${formatCurrency(item.revenueTarget)}</td>
-                        <td>${formatCurrency(item.revenue)}</td>
-                        <td>${formatCurrency(item.margin)}<br /><span class="muted-cell">${formatPercent(item.marginPercent)}</span></td>
+                        ${canViewFinance ? `<td>${formatCurrency(item.revenueTarget)}</td><td>${formatCurrency(item.revenue)}</td><td>${formatCurrency(item.margin)}<br /><span class="muted-cell">${formatPercent(item.marginPercent)}</span></td>` : ""}
                         <td><strong>${item.score}</strong></td>
                       </tr>
                     `
                   )
                   .join("")
-              : `<tr><td colspan="15" class="empty">No recruiter performance data available.</td></tr>`}
+              : `<tr><td colspan="${canViewFinance ? 15 : 12}" class="empty">No recruiter performance data available.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -6952,6 +6953,10 @@ function canCurrentUserManageTaName(name) {
 }
 
 function saveTaTargetRow(userId) {
+  if (!canCurrentUserAccessExecutiveFinance()) {
+    alert("Only the CEO and Managing Director can update revenue targets.");
+    return;
+  }
   const user = findById(state.users, userId);
   if (!user) return;
 
@@ -6973,6 +6978,10 @@ function saveTaTargetRow(userId) {
 }
 
 function savePlacementFinanceRow(candidateId) {
+  if (!canCurrentUserAccessExecutiveFinance()) {
+    alert("Only the CEO and Managing Director can update revenue or margin.");
+    return;
+  }
   const candidate = findById(state.candidates, candidateId);
   if (!candidate) return;
 
@@ -7812,7 +7821,9 @@ function getOperationalCommandCenter(candidates, jobs) {
       { label: "Duplicate Reviews", value: duplicatePending, help: "Merge or ignore duplicates", section: "bulk-upload", tone: duplicatePending ? "yellow" : "green" },
       { label: "Stuck Candidates", value: staleCandidates, help: "No update in 7+ days", section: "pipeline", tone: staleCandidates ? "yellow" : "green" },
       { label: "Open Jobs", value: openJobs, help: "Active hiring demand", section: "jobs", tone: "blue" },
-      { label: "Revenue View", value: formatCurrency(filteredPlacements().reduce((acc, item) => acc + getPlacementRevenue(item), 0)), help: "Founder finance", section: "revenue", tone: "green" },
+      ...(canCurrentUserAccessExecutiveFinance()
+        ? [{ label: "Revenue View", value: formatCurrency(filteredPlacements().reduce((acc, item) => acc + getPlacementRevenue(item), 0)), help: "Executive finance", section: "revenue", tone: "green" }]
+        : []),
       { label: "Team Tracking", value: getRecruiterPerformanceRows().length, help: "Recruiter performance", section: "team-dashboard", tone: "blue" }
     ];
   }
@@ -8707,6 +8718,7 @@ function renderRevenueSection() {
 }
 
 function renderLeaderboardSection() {
+  const canViewFinance = canCurrentUserAccessExecutiveFinance();
   const ranked = rankRecruiterPerformanceRows(
     getRecruiterPerformanceRows({ includeAll: true, currentMonthOnly: true, ignoreSearch: true })
   );
@@ -8728,7 +8740,7 @@ function renderLeaderboardSection() {
               <th>Target Progress</th>
               <th>Submitted</th>
               <th>Joined</th>
-              <th>Revenue</th>
+              ${canViewFinance ? "<th>Revenue</th>" : ""}
               <th>Score</th>
             </tr>
           </thead>
@@ -8737,10 +8749,10 @@ function renderLeaderboardSection() {
               ? rows
                   .map(
                     (item) =>
-                      `<tr><td><span class="rank-pill">${item.rank}</span></td><td><strong>${escapeHtml(item.name)}</strong><br /><span class="muted-cell">${escapeHtml(item.team)}</span></td><td>${item.candidates}</td><td><div class="target-cell"><span>${item.candidates}/${item.monthlyTarget || "-"} · ${formatPercent(item.targetAttainment)}</span>${progressBar(item.targetAttainment)}</div></td><td>${item.submitted}</td><td>${item.joined}</td><td>${formatCurrency(item.revenue)}</td><td><strong>${item.score}</strong></td></tr>`
+                      `<tr><td><span class="rank-pill">${item.rank}</span></td><td><strong>${escapeHtml(item.name)}</strong><br /><span class="muted-cell">${escapeHtml(item.team)}</span></td><td>${item.candidates}</td><td><div class="target-cell"><span>${item.candidates}/${item.monthlyTarget || "-"} · ${formatPercent(item.targetAttainment)}</span>${progressBar(item.targetAttainment)}</div></td><td>${item.submitted}</td><td>${item.joined}</td>${canViewFinance ? `<td>${formatCurrency(item.revenue)}</td>` : ""}<td><strong>${item.score}</strong></td></tr>`
                   )
                   .join("")
-              : `<tr><td colspan="8" class="empty">No leaderboard data available.</td></tr>`}
+              : `<tr><td colspan="${canViewFinance ? 8 : 7}" class="empty">No leaderboard data available.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -12386,6 +12398,7 @@ function openCreateDialog() {
   el.recordDialogTitle.textContent = `New ${singularLabel(config.title)}`;
 
   el.recordFields.innerHTML = FORM_SCHEMAS[entity]
+    .filter((field) => field.name !== "revenueTarget" || canCurrentUserAccessExecutiveFinance())
     .map((field) => {
       const defaultValue = getCreateDialogDefaultValue(entity, field.name);
       if (field.type === "manager-select") {

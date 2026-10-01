@@ -6,15 +6,15 @@ import { test } from "node:test";
 const root = process.cwd();
 const read = (file: string) => readFile(path.join(root, file), "utf8");
 
-test("recruiter dashboard renders personal monthly targets instead of the founder tracker", async () => {
+test("recruiter dashboard keeps financial targets in the executive tracker only", async () => {
   const browser = await read("app.js");
 
-  assert.match(browser, /isFounder \? renderTargetAchievementTracker\(\) : renderRecruiterDashboardPerformance\(\)/);
+  assert.match(browser, /canViewFinance \? renderTargetAchievementTracker\(\) : renderRecruiterDashboardPerformance\(\)/);
   assert.match(browser, /My Monthly Performance/);
   assert.match(browser, /Target progress &amp; leaderboard standing/);
   assert.match(browser, /currentMonthOnly: true/);
   assert.match(browser, /Candidate Target/);
-  assert.match(browser, /Revenue Target/);
+  assert.match(browser, /canViewFinance \? metricCard\("Revenue Target"/);
   assert.match(browser, /Leaderboard Rank/);
 });
 

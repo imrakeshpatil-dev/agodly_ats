@@ -163,17 +163,22 @@ test("executive finance figures are restricted to the CEO and Managing Director"
 
   const adminSnapshot = authorizationService.scopeAppState(admin, {
     bulkUpload: {},
-    users: [],
+    users: [{ id: "usr-a", name: "Recruiter A", revenueTarget: 250000 }],
     candidates: [candidateA],
     clients: [],
     jobs: [],
     interviews: [],
     placements: [{ id: "placement-a", candidateId: candidateA.id, revenue: 1000, cost: 500, margin: 500 }],
-    activities: []
+    activities: [
+      { id: "activity-finance", type: "revenue", message: "Placement finance updated" },
+      { id: "activity-pipeline", type: "pipeline", message: "Candidate moved" }
+    ]
   });
   assert.equal("revenue" in adminSnapshot.placements[0], false);
   assert.equal("cost" in adminSnapshot.placements[0], false);
   assert.equal("margin" in adminSnapshot.placements[0], false);
+  assert.equal("revenueTarget" in adminSnapshot.users[0], false);
+  assert.deepEqual(adminSnapshot.activities.map((activity) => activity.id), ["activity-pipeline"]);
 });
 
 test("sync payload rejects cross-recruiter mutations and ownership reassignment", () => {

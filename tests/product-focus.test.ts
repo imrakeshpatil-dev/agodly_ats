@@ -65,4 +65,6 @@ test("executive finance shows QoQ and YoY business charts only to CEO and Managi
   assert.match(browser, /revenueShare/);
   assert.match(browser, /No client contribution data available/);
   assert.match(browser, /Contract Project Health/);
+  assert.match(browser, /Only the CEO and Managing Director can update revenue or margin/);
+  assert.match(browser, /canViewFinance \? metricCard\("Total Revenue"/);
 });
