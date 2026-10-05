@@ -43,3 +43,16 @@ test("visual polish defines consistent controls, table rhythm, typography, and m
   assert.match(styles, /\.candidate-table th:nth-child\(11\)[\s\S]*?display: none/);
   assert.match(styles, /@media \(max-width: 560px\)[\s\S]*?\.toolbar h1\s*{\s*font-size: 1\.45rem/);
 });
+
+test("core hiring workflows retain an intentional visual hierarchy", async () => {
+  const [browser, styles] = await Promise.all([read("app.js"), read("styles.css")]);
+
+  assert.match(browser, /Hiring workspace/);
+  assert.match(browser, /jobs-summary-strip/);
+  assert.match(browser, /Hiring momentum/);
+  assert.match(browser, /pipeline-card-head/);
+  assert.match(browser, /candidate-profile-overview/);
+  assert.match(styles, /\.jobs-workspace-panel,/);
+  assert.match(styles, /\.pipeline-card-head\s*{/);
+  assert.match(styles, /\.candidate-profile-overview\s*{/);
+});

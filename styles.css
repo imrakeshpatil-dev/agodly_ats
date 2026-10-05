@@ -2778,6 +2778,393 @@ tr.is-selected-row td {
   background: #5b86b8;
 }
 
+/* Core workflow visual system ------------------------------------------------ */
+.workspace-kicker {
+  margin: 0 0 0.22rem;
+  color: #78bcff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.jobs-workspace-panel,
+.pipeline-workspace-panel {
+  overflow: hidden;
+  border-color: rgba(63, 111, 161, 0.7);
+  background:
+    radial-gradient(circle at 94% -28%, rgba(61, 149, 255, 0.2), transparent 40%),
+    linear-gradient(140deg, rgba(17, 41, 70, 0.98), rgba(10, 25, 44, 0.99));
+}
+
+.jobs-workspace-panel::after,
+.pipeline-workspace-panel::after {
+  position: absolute;
+  right: -4.5rem;
+  bottom: -5.5rem;
+  width: 13rem;
+  height: 13rem;
+  border: 1px solid rgba(123, 190, 255, 0.18);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2rem rgba(123, 190, 255, 0.035), 0 0 0 4rem rgba(123, 190, 255, 0.025);
+  content: "";
+  pointer-events: none;
+}
+
+.jobs-workspace-panel > *,
+.pipeline-workspace-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.jobs-summary-strip,
+.pipeline-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.jobs-summary-strip {
+  margin-top: 0.8rem;
+}
+
+.jobs-summary-strip span,
+.pipeline-summary span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.4rem 0.58rem;
+  border: 1px solid rgba(122, 166, 216, 0.3);
+  border-radius: 999px;
+  background: rgba(4, 17, 32, 0.28);
+  color: #aebed4;
+  font-size: 0.75rem;
+}
+
+.jobs-summary-strip strong,
+.pipeline-summary strong {
+  color: #f4f8ff;
+  font-size: 0.92rem;
+}
+
+.jobs-filters {
+  padding: 0.58rem;
+  border: 1px solid rgba(72, 112, 158, 0.38);
+  border-radius: 13px;
+  background: rgba(3, 15, 29, 0.28);
+}
+
+.jobs-filters input,
+.jobs-filters select {
+  min-height: 2.6rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.jobs-filters input:focus,
+.jobs-filters select:focus,
+.job-form-grid input:focus,
+.job-form-grid select:focus,
+.job-jd-textarea:focus {
+  border-color: #62b4ff;
+  box-shadow: 0 0 0 3px rgba(71, 161, 255, 0.15);
+  background: #14233a;
+  outline: none;
+}
+
+.jobs-list-panel {
+  padding: 0.55rem;
+  background: linear-gradient(180deg, rgba(14, 34, 58, 0.96), rgba(9, 23, 41, 0.98));
+}
+
+.jobs-table {
+  border-collapse: separate;
+  border-spacing: 0 0.35rem;
+}
+
+.jobs-table thead th {
+  border-bottom: 0;
+  color: #879bb8;
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+}
+
+.jobs-table tbody td {
+  border-top: 1px solid rgba(66, 102, 145, 0.36);
+  border-bottom: 1px solid rgba(66, 102, 145, 0.36);
+  background: rgba(7, 20, 36, 0.52);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.jobs-table tbody td:first-child {
+  border-left: 1px solid rgba(66, 102, 145, 0.36);
+  border-radius: 12px 0 0 12px;
+}
+
+.jobs-table tbody td:last-child {
+  border-right: 1px solid rgba(66, 102, 145, 0.36);
+  border-radius: 0 12px 12px 0;
+}
+
+.jobs-table tbody tr:hover td {
+  border-color: rgba(99, 177, 255, 0.56);
+  background: rgba(31, 69, 109, 0.32);
+}
+
+.jobs-role-cell,
+.jobs-client-cell {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 150px;
+}
+
+.jobs-role-cell strong,
+.jobs-client-cell strong {
+  color: #eef6ff;
+  font-size: 0.88rem;
+}
+
+.jobs-role-cell span,
+.jobs-client-cell span {
+  color: #89a1c1;
+  font-size: 0.72rem;
+}
+
+.jobs-empty {
+  border-color: rgba(80, 135, 194, 0.48);
+  background:
+    radial-gradient(circle at center, rgba(46, 118, 207, 0.12), transparent 58%),
+    rgba(7, 23, 41, 0.8);
+}
+
+.jobs-create-header {
+  padding: 0.25rem;
+}
+
+.job-create-progress {
+  position: relative;
+  gap: 0.6rem;
+}
+
+.job-create-progress li {
+  min-height: 3.25rem;
+  border-color: rgba(77, 115, 158, 0.48);
+  background: rgba(4, 18, 35, 0.34);
+}
+
+.job-create-progress li.is-current {
+  box-shadow: inset 0 0 0 1px rgba(239, 193, 91, 0.14), 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.jobs-jd-assist,
+.jobs-essential-panel,
+.jobs-assignment-panel {
+  border-color: rgba(70, 123, 181, 0.56);
+  background: linear-gradient(145deg, rgba(16, 43, 74, 0.97), rgba(10, 25, 44, 0.99));
+}
+
+.job-jd-textarea {
+  border-color: rgba(80, 139, 203, 0.58);
+  background: linear-gradient(180deg, #101f34, #0b1728);
+  line-height: 1.65 !important;
+}
+
+.job-extraction-review {
+  border-radius: 13px;
+  background: rgba(16, 62, 88, 0.24);
+}
+
+.job-publish-readiness {
+  position: relative;
+  overflow: hidden;
+}
+
+.job-publish-readiness.is-ready {
+  border-color: rgba(61, 189, 136, 0.66);
+  background: linear-gradient(120deg, rgba(16, 72, 58, 0.54), rgba(10, 32, 43, 0.96));
+}
+
+.pipeline-workspace-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.pipeline-summary {
+  justify-content: flex-end;
+  max-width: 430px;
+}
+
+.pipeline-toolbar {
+  margin-top: 0.9rem;
+  padding: 0.62rem;
+  border: 1px solid rgba(70, 115, 163, 0.4);
+  border-radius: 13px;
+  background: rgba(3, 16, 31, 0.33);
+}
+
+.pipeline-filter-field span {
+  color: #91a8c7;
+  font-weight: 700;
+}
+
+.pipeline-toolbar select {
+  min-height: 2.4rem;
+  border-radius: 10px;
+}
+
+.pipeline-board {
+  padding-top: 0.35rem;
+}
+
+.pipeline-col {
+  border-color: rgba(68, 109, 154, 0.6);
+  background: linear-gradient(180deg, rgba(17, 44, 74, 0.98), rgba(8, 25, 45, 0.98));
+}
+
+.pipeline-col h3 {
+  color: #c3dcfb;
+  background: linear-gradient(180deg, rgba(24, 55, 89, 0.99), rgba(17, 38, 65, 0.99));
+}
+
+.pipeline-item {
+  border-color: rgba(69, 111, 158, 0.45);
+  background: linear-gradient(145deg, rgba(13, 32, 54, 0.98), rgba(8, 20, 36, 0.98));
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.pipeline-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(100, 181, 255, 0.74);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.22);
+}
+
+.pipeline-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.54rem;
+}
+
+.pipeline-card-head > div {
+  min-width: 0;
+}
+
+.pipeline-card-head strong {
+  display: block;
+  overflow: hidden;
+  color: #f1f7ff;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-avatar,
+.candidate-profile-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(142, 205, 255, 0.7);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #398fe0, #204a8a);
+  box-shadow: 0 5px 15px rgba(13, 73, 132, 0.38);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.pipeline-avatar {
+  width: 2rem;
+  height: 2rem;
+}
+
+.pipeline-item .meta {
+  color: #a7b9d1;
+}
+
+.candidate-side-panel {
+  border-color: rgba(76, 132, 190, 0.82);
+  background:
+    radial-gradient(circle at 100% 0, rgba(50, 141, 240, 0.18), transparent 30%),
+    linear-gradient(155deg, rgba(16, 40, 68, 0.99), rgba(8, 22, 41, 0.99));
+}
+
+.candidate-side-panel .candidate-side-head {
+  border-bottom-color: rgba(82, 130, 182, 0.5);
+  background: rgba(13, 35, 59, 0.97);
+}
+
+.candidate-profile-overview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.68rem;
+  margin: 0.85rem 0;
+  padding: 0.7rem;
+  border: 1px solid rgba(83, 141, 201, 0.48);
+  border-radius: 14px;
+  background: rgba(6, 25, 45, 0.5);
+}
+
+.candidate-profile-avatar {
+  width: 2.65rem;
+  height: 2.65rem;
+  font-size: 0.82rem;
+}
+
+.candidate-profile-overview > div:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.candidate-profile-overview > div:nth-child(2) strong {
+  color: #f0f7ff;
+}
+
+.candidate-profile-overview > div:nth-child(2) span {
+  overflow: hidden;
+  color: #a2b5cf;
+  font-size: 0.73rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-profile-stage .badge {
+  white-space: nowrap;
+}
+
+.candidate-edit-grid {
+  padding-top: 0.72rem;
+  border-top: 1px solid rgba(77, 120, 166, 0.34);
+}
+
+@media (max-width: 760px) {
+  .jobs-header,
+  .pipeline-workspace-head {
+    flex-direction: column;
+  }
+
+  .pipeline-summary {
+    justify-content: flex-start;
+  }
+
+  .jobs-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .job-create-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .candidate-profile-overview {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .candidate-profile-stage {
+    grid-column: 1 / -1;
+  }
+}
+
 .bulk-toolbar {
   margin-top: 0.55rem;
   display: flex;

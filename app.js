@@ -4347,6 +4347,9 @@ function renderJobsSection() {
 function renderJobsListSection() {
   const jobs = filteredJobs({ includeJobsFilters: true });
   const jobsBeforeListFilters = filteredJobs();
+  const activeJobs = jobsBeforeListFilters.filter((job) => normalizeJobStatus(job.status) === "ACTIVE").length;
+  const openOpenings = jobsBeforeListFilters.reduce((total, job) => total + (normalizeJobStatus(job.status) === "ACTIVE" ? Number(job.openings || 0) : 0), 0);
+  const assignedJobs = jobsBeforeListFilters.filter((job) => String(job.assignedRecruiterId || "").trim()).length;
   const hasLocalJobListFilters = Boolean(
     String(ui.jobs.search || "").trim() ||
     String(ui.jobs.statusFilter || "all").toLowerCase() !== "all" ||
@@ -4362,16 +4365,23 @@ function renderJobsListSection() {
   return `
     ${renderHiringDemandInsights()}
 
-    <section class="panel">
+    <section class="panel jobs-workspace-panel">
       <div class="jobs-header">
         <div>
+          <p class="workspace-kicker">Hiring workspace</p>
           <h2 class="panel-title">Jobs</h2>
-          <p class="panel-subtitle">Showing ${jobCountLabel}${hasJobListFilters ? " after filters" : ""}.</p>
+          <p class="panel-subtitle">Showing ${jobCountLabel}${hasJobListFilters ? " after filters" : ""}. Keep every requirement owned, visible, and ready to move.</p>
         </div>
         <div class="table-actions">
           ${hasJobListFilters ? '<button class="tool-btn" type="button" data-action="clear-job-filters">Clear filters</button>' : ""}
           <button class="tool-btn jobs-create-btn" type="button" data-action="create-job">+ Create Job</button>
         </div>
+      </div>
+
+      <div class="jobs-summary-strip" aria-label="Job summary">
+        <span><strong>${activeJobs}</strong> active roles</span>
+        <span><strong>${openOpenings}</strong> open positions</span>
+        <span><strong>${assignedJobs}</strong> recruiter-owned</span>
       </div>
 
       <div class="jobs-filters">
@@ -4403,7 +4413,7 @@ function renderJobsListSection() {
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel jobs-list-panel">
       ${
         jobs.length
           ? `
@@ -4426,10 +4436,11 @@ function renderJobsListSection() {
               ${jobs
                 .map((job) => {
                   const client = findById(state.clients, job.clientId);
+                  const owner = findById(state.users, job.assignedRecruiterId);
                   return `
-                    <tr>
-                      <td>${escapeHtml(job.title)}</td>
-                      <td>${escapeHtml(client?.name || "Unassigned")}</td>
+                    <tr class="jobs-table-row">
+                      <td><div class="jobs-role-cell"><strong>${escapeHtml(job.title)}</strong><span>${escapeHtml(job.priority ? `${toTitleCase(String(job.priority).toLowerCase())} priority` : "Standard priority")}</span></div></td>
+                      <td><div class="jobs-client-cell"><strong>${escapeHtml(client?.name || "Unassigned")}</strong><span>${escapeHtml(owner?.name || "Owner not assigned")}</span></div></td>
                       <td>
                         <strong>${escapeHtml(normalizeWorkModeLabel(job.workMode))}</strong>
                         <span class="jobs-cell-note">${escapeHtml(job.location || job.remoteScope || "-")}</span>
@@ -5661,6 +5672,8 @@ function renderPipelineSection() {
     .sort(comparePipelineCandidates);
   const visibleStages = PIPELINE_STAGES;
   const canWrite = canCurrentUserWriteRecords();
+  const activeStageCount = new Set(candidates.map((item) => item.stage)).size;
+  const submittedCount = candidates.filter((item) => ["Submitted", "Interview", "Offer"].includes(String(item.stage || ""))).length;
 
   const board = visibleStages
     .map((stage) => {
@@ -5676,8 +5689,10 @@ function renderPipelineSection() {
                   const skills = Array.isArray(item.skills) ? item.skills.slice(0, 3) : [];
                   return `
                   <article class="pipeline-item">
-                    <p><strong>${escapeHtml(item.name)}</strong></p>
-                    <p class="meta">${escapeHtml(role)}</p>
+                    <div class="pipeline-card-head">
+                      <span class="pipeline-avatar" aria-hidden="true">${escapeHtml(initials(item.name))}</span>
+                      <div><strong>${escapeHtml(item.name)}</strong><p class="meta">${escapeHtml(role)}</p></div>
+                    </div>
                     <p class="meta">${item.experienceYears == null ? "Experience not set" : `${escapeHtml(String(item.experienceYears))} yrs`} · ${escapeHtml(item.location || "Location not set")}</p>
                     ${
                       skills.length
@@ -5699,8 +5714,15 @@ function renderPipelineSection() {
     .join("");
 
   return `
-    <section class="panel">
-      <h2 class="panel-title">Pipeline Board</h2>
+    <section class="panel pipeline-workspace-panel">
+      <div class="pipeline-workspace-head">
+        <div>
+          <p class="workspace-kicker">Hiring momentum</p>
+          <h2 class="panel-title">Pipeline Board</h2>
+          <p class="panel-subtitle">A focused view of candidate movement, ownership, and next decisions.</p>
+        </div>
+        <div class="pipeline-summary" aria-label="Pipeline summary"><span><strong>${candidates.length}</strong> candidates</span><span><strong>${submittedCount}</strong> in decision stages</span><span><strong>${activeStageCount}</strong> active stages</span></div>
+      </div>
       <div class="pipeline-toolbar">
         <label class="pipeline-filter-field">
           <span>Stage</span>
@@ -8906,6 +8928,9 @@ function renderCandidateSidePanel() {
   const submissions = getCandidateSubmissions(preview);
   const collaborationNotes = getCandidateCollaborationNotes(preview);
   const canWrite = canCurrentUserWriteRecords();
+  const assignedJob = findById(state.jobs, preview.jobId || selectedCandidate.jobId);
+  const profileRole = preview.currentRole || selectedCandidate.currentRole || "Role not recorded";
+  const profileCompany = preview.currentCompany || selectedCandidate.currentCompany || "Company not recorded";
 
   return `
     <aside class="panel candidate-side-panel" id="candidateProfilePanel" aria-labelledby="candidateProfileTitle">
@@ -8918,6 +8943,16 @@ function renderCandidateSidePanel() {
       </div>
       <p class="panel-subtitle">Editing: ${escapeHtml(selectedCandidate.name)}</p>
       ${deleted ? `<p class="panel-subtitle">This profile is in Deleted Candidates.</p>` : ""}
+
+      <section class="candidate-profile-overview" aria-label="Candidate summary">
+        <span class="candidate-profile-avatar" aria-hidden="true">${escapeHtml(initials(preview.name || selectedCandidate.name))}</span>
+        <div>
+          <strong>${escapeHtml(profileRole)}</strong>
+          <span>${escapeHtml(profileCompany)}</span>
+          <span>${escapeHtml(assignedJob?.title || "No job assigned")} · ${escapeHtml(preview.location || selectedCandidate.location || "Location not recorded")}</span>
+        </div>
+        <div class="candidate-profile-stage">${statusBadge(preview.stage || selectedCandidate.stage || "New")}</div>
+      </section>
 
       <div class="candidate-edit-grid">
         <label class="dialog-field">
