@@ -56,6 +56,7 @@ const BULK_ALLOWED_EXTENSIONS = new Set(["csv", "xlsx", "pdf", "doc", "docx"]);
 const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
 let pipelineDragState = null;
+const financeEditDrafts = new Map();
 
 const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
@@ -1397,6 +1398,11 @@ function onSectionClick(event) {
 }
 
 function onSectionChange(event) {
+  if (event.target.matches("[data-finance-field]")) {
+    setFinanceEditDraftValue(event.target.dataset.candidateId, event.target.dataset.financeField, event.target.value);
+    return;
+  }
+
   if (event.target.matches("#bulkUploadSpreadsheetInput")) {
     void previewBulkImport(event.target.files);
     event.target.value = "";
@@ -1678,6 +1684,11 @@ function onSectionChange(event) {
 }
 
 function onSectionInput(event) {
+  if (event.target.matches("[data-finance-field]")) {
+    setFinanceEditDraftValue(event.target.dataset.candidateId, event.target.dataset.financeField, event.target.value);
+    return;
+  }
+
   if (event.target.matches("[data-action='candidate-note-draft']")) {
     ui.candidates.noteDraft = event.target.value;
     return;
@@ -3868,6 +3879,13 @@ function renderOnboardedRevenueTracker() {
                 ? rows
                     .map((row) => {
                       const editable = canCurrentUserManageTaName(row.recruiter);
+                      const draftValue = (field, savedValue = "") => getFinanceEditDraftValue(row.candidateId, field, savedValue);
+                      const clientId = draftValue("clientId", row.clientId);
+                      const projectStartDate = draftValue("projectStartDate", row.projectStartDate || "");
+                      const projectEndDate = draftValue("projectEndDate", row.projectEndDate || "");
+                      const recognitionDate = draftValue("recognitionDate", row.recognitionDate || row.date || "");
+                      const revenue = draftValue("revenue", String(Number(row.revenue || 0)));
+                      const cost = draftValue("cost", String(Number(row.cost || 0)));
                       return `
                         <tr>
                           <td><strong>${escapeHtml(row.candidateName)}</strong></td>
@@ -3876,12 +3894,12 @@ function renderOnboardedRevenueTracker() {
                           <td>
                             <select class="tracker-input tracker-client-select" data-finance-field="clientId" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}>
                               <option value="">Assign client *</option>
-                              ${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${row.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
+                              ${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
                             </select>
                           </td>
                           <td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectStartDate || row.date)}" ${editable ? "" : "disabled"} />` : `<input class="tracker-input" type="date" data-finance-field="recognitionDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.recognitionDate || row.date)}" ${editable ? "" : "disabled"} />`}</td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectEndDate || "")}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectStartDate))}" ${editable ? "" : "disabled"} />` : `<input class="tracker-input" type="date" data-finance-field="recognitionDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(recognitionDate))}" ${editable ? "" : "disabled"} />`}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectEndDate))}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
                           <td>
                             <input
                               class="tracker-input"
@@ -3889,7 +3907,7 @@ function renderOnboardedRevenueTracker() {
                               min="0"
                               data-finance-field="revenue"
                               data-candidate-id="${escapeHtml(row.candidateId)}"
-                              value="${Number(row.revenue || 0)}"
+                              value="${escapeHtml(String(revenue))}"
                               ${editable ? "" : "disabled"}
                             />
                           </td>
@@ -3900,7 +3918,7 @@ function renderOnboardedRevenueTracker() {
                               min="0"
                               data-finance-field="cost"
                               data-candidate-id="${escapeHtml(row.candidateId)}"
-                              value="${Number(row.cost || 0)}"
+                              value="${escapeHtml(String(cost))}"
                               ${editable ? "" : "disabled"}
                             />
                           </td>
@@ -6918,7 +6936,7 @@ function getOnboardedRevenueRows() {
       const revenue = getPlacementRevenue(placement);
       const cost = calculatePlacementCost(placement);
       const margin = revenue - cost;
-      const projectStartDate = String(placement?.projectStartDate || placement?.startDate || placement?.date || "");
+      const projectStartDate = String(placement?.projectStartDate || placement?.startDate || "");
       const projectEndDate = String(placement?.projectEndDate || placement?.endDate || "");
       const clientId = String(placement?.clientId || "");
       const client = findById(state.clients, clientId);
@@ -7065,16 +7083,17 @@ function savePlacementFinanceRow(candidateId) {
   const endDateInput = findFinanceInput("projectEndDate", candidate.id);
   const recognitionDateInput = findFinanceInput("recognitionDate", candidate.id);
   const clientInput = findFinanceInput("clientId", candidate.id);
-  const revenue = normalizeMoneyValue(revenueInput?.value);
-  const cost = normalizeMoneyValue(costInput?.value);
+  const draftValue = (field, input, fallback = "") => getFinanceEditDraftValue(candidate.id, field, input?.value ?? fallback);
+  const revenue = normalizeMoneyValue(draftValue("revenue", revenueInput));
+  const cost = normalizeMoneyValue(draftValue("cost", costInput));
   const margin = revenue - cost;
   let placement = findPlacementForCandidate(candidate.id);
   const job = findById(state.jobs, placement?.jobId || candidate.jobId);
   const engagementType = getPlacementEngagementType(placement, job, candidate);
-  const projectStartDate = String(startDateInput?.value || placement?.projectStartDate || placement?.startDate || placement?.date || "").trim();
-  const projectEndDate = String(endDateInput?.value || "").trim();
-  const recognitionDate = String(recognitionDateInput?.value || placement?.recognitionDate || placement?.date || "").trim();
-  const clientId = String(clientInput?.value || placement?.clientId || "").trim();
+  const projectStartDate = String(draftValue("projectStartDate", startDateInput, placement?.projectStartDate || placement?.startDate || "")).trim();
+  const projectEndDate = String(draftValue("projectEndDate", endDateInput, placement?.projectEndDate || placement?.endDate || "")).trim();
+  const recognitionDate = String(draftValue("recognitionDate", recognitionDateInput, placement?.recognitionDate || placement?.date || "")).trim();
+  const clientId = String(draftValue("clientId", clientInput, placement?.clientId || "")).trim();
 
   if (!clientId || !findById(state.clients, clientId)) {
     alert("Assign a valid client before saving deployed candidate finance.");
@@ -7106,7 +7125,7 @@ function savePlacementFinanceRow(candidateId) {
       margin: 0,
       date: todayISO(),
       engagementType,
-      projectStartDate: engagementType === "Contractual" ? projectStartDate || todayISO() : "",
+      projectStartDate: engagementType === "Contractual" ? projectStartDate : "",
       projectEndDate: "",
       recognitionDate: engagementType === "FTE" ? recognitionDate || todayISO() : "",
       rateHistory: []
@@ -7140,6 +7159,7 @@ function savePlacementFinanceRow(candidateId) {
   candidate.stage = "Onboarded";
 
   recordActivity("revenue", `${engagementType === "Contractual" ? "C2C monthly rate" : "FTE one-time fee"} updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · closed ${projectEndDate}` : ""}`);
+  clearFinanceEditDraft(candidate.id);
   saveAndRender();
 }
 
@@ -7153,6 +7173,25 @@ function findFinanceInput(field, candidateId) {
   return Array.from(el.sectionContainer.querySelectorAll("[data-finance-field]")).find(
     (input) => input.dataset.financeField === field && input.dataset.candidateId === candidateId
   );
+}
+
+function getFinanceEditDraftValue(candidateId, field, fallback = "") {
+  const draft = financeEditDrafts.get(String(candidateId));
+  return draft && Object.prototype.hasOwnProperty.call(draft, field) ? draft[field] : fallback;
+}
+
+function setFinanceEditDraftValue(candidateId, field, value) {
+  const id = String(candidateId || "");
+  if (!id || !field) return;
+  financeEditDrafts.set(id, { ...(financeEditDrafts.get(id) || {}), [field]: value });
+}
+
+function clearFinanceEditDraft(candidateId) {
+  financeEditDrafts.delete(String(candidateId));
+}
+
+function hasFinanceEditDrafts() {
+  return financeEditDrafts.size > 0;
 }
 
 function normalizeMoneyValue(value) {
@@ -8675,7 +8714,7 @@ function formatGrowth(value) {
 function getPlacementFinanceStartDate(placement, engagementType) {
   return String(
     engagementType === "Contractual"
-      ? placement?.projectStartDate || placement?.startDate || placement?.date || ""
+      ? placement?.projectStartDate || placement?.startDate || ""
       : placement?.recognitionDate || placement?.date || placement?.projectStartDate || ""
   ).slice(0, 10);
 }
@@ -13463,7 +13502,9 @@ async function refreshSharedStateFromBackendIfIdle() {
     !isAuthenticated() ||
     ui.isHydratingFromBackend ||
     ui.backendSyncInFlight ||
-    ui.backendSyncTimerId
+    ui.backendSyncTimerId ||
+    hasFinanceEditDrafts() ||
+    document.activeElement?.matches("[data-finance-field]")
   ) {
     return false;
   }

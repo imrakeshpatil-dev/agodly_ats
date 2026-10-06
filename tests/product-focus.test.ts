@@ -49,6 +49,17 @@ test("contractual onboarding retains project dates and rolls actual finance up b
   assert.match(browser, /projectEndDate: String\(item\.projectEndDate \|\| item\.endDate \|\| ""\)/);
 });
 
+test("finance edits are explicit and survive a background state refresh until saved", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.doesNotMatch(browser, /value="\$\{escapeHtml\(row\.projectStartDate \|\| row\.date\)\}"/);
+  assert.doesNotMatch(browser, /placement\?\.projectStartDate \|\| placement\?\.startDate \|\| placement\?\.date/);
+  assert.match(browser, /const financeEditDrafts = new Map\(\)/);
+  assert.match(browser, /setFinanceEditDraftValue\(event\.target\.dataset\.candidateId, event\.target\.dataset\.financeField, event\.target\.value\)/);
+  assert.match(browser, /hasFinanceEditDrafts\(\)/);
+  assert.match(browser, /clearFinanceEditDraft\(candidate\.id\)/);
+});
+
 test("executive finance shows QoQ and YoY business charts only to CEO and Managing Director", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
