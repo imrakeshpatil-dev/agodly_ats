@@ -441,6 +441,13 @@ const ui = {
     aiShortlistLoading: false,
     aiShortlist: null
   },
+  revenue: {
+    period: "all",
+    clientId: "all",
+    recruiter: "all",
+    candidateId: "all",
+    contractStatus: "all"
+  },
   bulkUpload: {
     isProcessing: false,
     isPreviewing: false,
@@ -799,6 +806,12 @@ function onSectionClick(event) {
     ui.jobs.search = "";
     ui.jobs.statusFilter = "all";
     ui.jobs.clientFilter = "all";
+    renderSection();
+    return;
+  }
+
+  if (action === "clear-finance-filters") {
+    ui.revenue = { period: "all", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all" };
     renderSection();
     return;
   }
@@ -1549,6 +1562,36 @@ function onSectionChange(event) {
 
   if (event.target.matches("[data-action='jobs-status-filter']")) {
     ui.jobs.statusFilter = event.target.value;
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='finance-period-filter']")) {
+    ui.revenue.period = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='finance-client-filter']")) {
+    ui.revenue.clientId = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='finance-recruiter-filter']")) {
+    ui.revenue.recruiter = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='finance-candidate-filter']")) {
+    ui.revenue.candidateId = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='finance-contract-status-filter']")) {
+    ui.revenue.contractStatus = event.target.value || "all";
     renderSection();
     return;
   }
@@ -3789,7 +3832,7 @@ function renderOnboardedRevenueTracker() {
       <div class="section-heading-row">
         <div>
           <h2 class="panel-title">Onboarded Revenue & Margin</h2>
-          <p class="panel-subtitle">Track actual revenue and delivery cost for every onboarded candidate. Contractual projects also retain their start and completion dates.</p>
+          <p class="panel-subtitle">C2C amounts are monthly recurring rates from start until contract closure. FTE amounts are recognised once on the placement date.</p>
         </div>
         <div class="tracker-summary">
           <span>Overall Revenue ${formatCurrency(totalRevenue)}</span>
@@ -3811,10 +3854,10 @@ function renderOnboardedRevenueTracker() {
               <th>Job</th>
               <th>Client</th>
               <th>Type</th>
-              <th>Start Date</th>
-              <th>Project End</th>
-              <th>Actual Revenue</th>
-              <th>Delivery Cost</th>
+              <th>Recognition / Start</th>
+              <th>Contract End / Closure</th>
+              <th>Monthly Bill / FTE Fee</th>
+              <th>Monthly Cost / FTE Cost</th>
               <th>Margin</th>
               <th>Action</th>
             </tr>
@@ -3837,8 +3880,8 @@ function renderOnboardedRevenueTracker() {
                             </select>
                           </td>
                           <td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectStartDate || row.date)}" ${editable ? "" : "disabled"} />` : escapeHtml(row.date)}</td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectEndDate || "")}" ${editable ? "" : "disabled"} />` : "—"}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectStartDate || row.date)}" ${editable ? "" : "disabled"} />` : `<input class="tracker-input" type="date" data-finance-field="recognitionDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.recognitionDate || row.date)}" ${editable ? "" : "disabled"} />`}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(row.projectEndDate || "")}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
                           <td>
                             <input
                               class="tracker-input"
@@ -6892,6 +6935,7 @@ function getOnboardedRevenueRows() {
         engagementType,
         projectStartDate,
         projectEndDate,
+        recognitionDate: getPlacementFinanceStartDate(placement, engagementType),
         contractStatus: engagementType === "Contractual" ? (projectEndDate ? "Completed" : "Active") : "Permanent",
         revenue,
         cost,
@@ -6934,7 +6978,10 @@ function getPlacementEngagementType(placement, job, candidate) {
 }
 
 function getPlacementRecognitionDate(placement) {
-  return String(placement?.projectEndDate || placement?.endDate || placement?.projectStartDate || placement?.startDate || placement?.date || "");
+  const candidate = findById(state.candidates, placement?.candidateId);
+  const job = findById(state.jobs, placement?.jobId || candidate?.jobId);
+  const engagementType = getPlacementEngagementType(placement, job, candidate);
+  return getPlacementFinanceStartDate(placement, engagementType);
 }
 
 function getPlacementRevenue(placement) {
@@ -7016,6 +7063,7 @@ function savePlacementFinanceRow(candidateId) {
   const costInput = findFinanceInput("cost", candidate.id);
   const startDateInput = findFinanceInput("projectStartDate", candidate.id);
   const endDateInput = findFinanceInput("projectEndDate", candidate.id);
+  const recognitionDateInput = findFinanceInput("recognitionDate", candidate.id);
   const clientInput = findFinanceInput("clientId", candidate.id);
   const revenue = normalizeMoneyValue(revenueInput?.value);
   const cost = normalizeMoneyValue(costInput?.value);
@@ -7025,6 +7073,7 @@ function savePlacementFinanceRow(candidateId) {
   const engagementType = getPlacementEngagementType(placement, job, candidate);
   const projectStartDate = String(startDateInput?.value || placement?.projectStartDate || placement?.startDate || placement?.date || "").trim();
   const projectEndDate = String(endDateInput?.value || "").trim();
+  const recognitionDate = String(recognitionDateInput?.value || placement?.recognitionDate || placement?.date || "").trim();
   const clientId = String(clientInput?.value || placement?.clientId || "").trim();
 
   if (!clientId || !findById(state.clients, clientId)) {
@@ -7034,6 +7083,10 @@ function savePlacementFinanceRow(candidateId) {
 
   if (engagementType === "Contractual" && !projectStartDate) {
     alert("A contractual placement needs its project start date before finance can be saved.");
+    return;
+  }
+  if (engagementType === "FTE" && !recognitionDate) {
+    alert("An FTE placement needs its recognition date before finance can be saved.");
     return;
   }
   if (projectEndDate && projectStartDate && projectEndDate < projectStartDate) {
@@ -7054,7 +7107,9 @@ function savePlacementFinanceRow(candidateId) {
       date: todayISO(),
       engagementType,
       projectStartDate: engagementType === "Contractual" ? projectStartDate || todayISO() : "",
-      projectEndDate: ""
+      projectEndDate: "",
+      recognitionDate: engagementType === "FTE" ? recognitionDate || todayISO() : "",
+      rateHistory: []
     };
     state.placements.push(placement);
   }
@@ -7066,14 +7121,25 @@ function savePlacementFinanceRow(candidateId) {
   if (engagementType === "Contractual") {
     placement.projectStartDate = projectStartDate;
     placement.projectEndDate = projectEndDate;
+    placement.closureDate = projectEndDate;
+    placement.monthlyRevenue = revenue;
+    placement.monthlyCost = cost;
+  } else {
+    placement.recognitionDate = recognitionDate || placement.date || todayISO();
+    placement.oneTimeRevenue = revenue;
+    placement.oneTimeCost = cost;
   }
   placement.revenue = revenue;
   placement.cost = cost;
   placement.margin = margin;
   placement.date = placement.date || projectStartDate || todayISO();
+  const rateEffectiveDate = engagementType === "Contractual" ? projectStartDate : placement.recognitionDate;
+  const existingRateHistory = Array.isArray(placement.rateHistory) ? placement.rateHistory.filter((entry) => entry && String(entry.effectiveDate || "") !== rateEffectiveDate) : [];
+  placement.rateHistory = [...existingRateHistory, { effectiveDate: rateEffectiveDate, revenue, cost, changedAt: new Date().toISOString(), changedBy: getCurrentUser()?.name || "Executive finance" }]
+    .sort((left, right) => String(left.effectiveDate).localeCompare(String(right.effectiveDate)));
   candidate.stage = "Onboarded";
 
-  recordActivity("revenue", `${engagementType === "Contractual" ? "Contractual project" : "Placement"} finance updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · completed ${projectEndDate}` : ""}`);
+  recordActivity("revenue", `${engagementType === "Contractual" ? "C2C monthly rate" : "FTE one-time fee"} updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · closed ${projectEndDate}` : ""}`);
   saveAndRender();
 }
 
@@ -8434,7 +8500,7 @@ function progressBar(value) {
 
 function horizontalChart(title, subtitle, rows, valueFormatter = null, maxOverride = null) {
   const cleanRows = Array.isArray(rows) ? rows.filter((row) => row && Number.isFinite(Number(row.value))) : [];
-  const maxValue = Math.max(Number(maxOverride || 0), ...cleanRows.map((row) => Number(row.value || 0)), 1);
+  const maxValue = Math.max(Number(maxOverride || 0), ...cleanRows.map((row) => Math.abs(Number(row.value || 0))), 1);
 
   return `
     <article class="chart-card">
@@ -8448,7 +8514,7 @@ function horizontalChart(title, subtitle, rows, valueFormatter = null, maxOverri
             ? cleanRows
                 .map((row) => {
                   const value = Number(row.value || 0);
-                  const width = Math.min(Math.max((value / maxValue) * 100, value > 0 ? 4 : 0), 100);
+                  const width = Math.min(Math.max((Math.abs(value) / maxValue) * 100, value !== 0 ? 4 : 0), 100);
                   const displayValue = valueFormatter ? valueFormatter(value) : String(Math.round(value));
                   return `
                     <div class="chart-row">
@@ -8456,7 +8522,7 @@ function horizontalChart(title, subtitle, rows, valueFormatter = null, maxOverri
                         <strong>${escapeHtml(row.label || "-")}</strong>
                         <span>${escapeHtml(row.meta || "")}</span>
                       </div>
-                      <div class="chart-track"><span style="width: ${width}%"></span></div>
+                      <div class="chart-track ${value < 0 ? "negative" : ""}"><span style="width: ${width}%"></span></div>
                       <b>${escapeHtml(displayValue)}</b>
                     </div>
                   `;
@@ -8606,6 +8672,162 @@ function formatGrowth(value) {
   return `${rounded >= 0 ? "+" : ""}${rounded}%`;
 }
 
+function getPlacementFinanceStartDate(placement, engagementType) {
+  return String(
+    engagementType === "Contractual"
+      ? placement?.projectStartDate || placement?.startDate || placement?.date || ""
+      : placement?.recognitionDate || placement?.date || placement?.projectStartDate || ""
+  ).slice(0, 10);
+}
+
+function getPlacementFinanceEndDate(placement) {
+  return String(placement?.closureDate || placement?.projectEndDate || placement?.endDate || "").slice(0, 10);
+}
+
+function getFinanceDateParts(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  return year && month >= 1 && month <= 12 ? { year, month } : null;
+}
+
+function getFinanceMonthKey(value) {
+  const date = getFinanceDateParts(value);
+  return date ? `${date.year}-${String(date.month).padStart(2, "0")}` : "";
+}
+
+function getFinanceMonthLabel(monthKey) {
+  const match = String(monthKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "Unknown month";
+  return new Intl.DateTimeFormat("en-IN", { month: "short", year: "numeric" }).format(new Date(Number(match[1]), Number(match[2]) - 1, 1));
+}
+
+function getFinanceMonthsBetween(startDate, endDate) {
+  const start = getFinanceMonthKey(startDate);
+  const end = getFinanceMonthKey(endDate);
+  if (!start || !end || start > end) return [];
+  const months = [];
+  let [year, month] = start.split("-").map(Number);
+  while (`${year}-${String(month).padStart(2, "0")}` <= end && months.length < 600) {
+    months.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month === 13) { month = 1; year += 1; }
+  }
+  return months;
+}
+
+function getFinancePeriod(value) {
+  const date = getFinanceDateParts(value);
+  if (!date) return null;
+  const financialYearStart = date.month >= 4 ? date.year : date.year - 1;
+  const quarter = Math.floor(((date.month + 8) % 12) / 3) + 1;
+  const monthKey = `${date.year}-${String(date.month).padStart(2, "0")}`;
+  return {
+    financialYearStart,
+    financialYearLabel: `FY ${financialYearStart}–${String(financialYearStart + 1).slice(-2)}`,
+    quarter,
+    quarterKey: `fq:${financialYearStart}:${quarter}`,
+    quarterLabel: `FY ${financialYearStart}–${String(financialYearStart + 1).slice(-2)} · Q${quarter}`,
+    monthKey,
+    monthLabel: getFinanceMonthLabel(monthKey),
+    order: date.year * 12 + date.month
+  };
+}
+
+function getPlacementFinanceRate(placement, engagementType, effectiveDate) {
+  const fallbackRevenue = Number(engagementType === "Contractual" ? placement?.monthlyRevenue ?? placement?.revenue : placement?.oneTimeRevenue ?? placement?.revenue) || 0;
+  const fallbackCost = Number(engagementType === "Contractual" ? placement?.monthlyCost ?? placement?.cost : placement?.oneTimeCost ?? placement?.cost) || 0;
+  const history = (Array.isArray(placement?.rateHistory) ? placement.rateHistory : [])
+    .map((item) => ({ effectiveDate: String(item?.effectiveDate || "").slice(0, 10), revenue: normalizeMoneyValue(item?.revenue), cost: normalizeMoneyValue(item?.cost) }))
+    .filter((item) => getFinanceDateParts(item.effectiveDate))
+    .sort((left, right) => left.effectiveDate.localeCompare(right.effectiveDate));
+  const defaultRate = { effectiveDate: getPlacementFinanceStartDate(placement, engagementType) || todayISO(), revenue: fallbackRevenue, cost: fallbackCost };
+  return history.filter((item) => item.effectiveDate <= effectiveDate).at(-1) || history[0] || defaultRate;
+}
+
+function getFinanceContractStatus(placement, engagementType, asOf = todayISO()) {
+  if (engagementType !== "Contractual") return "FTE";
+  const endDate = getPlacementFinanceEndDate(placement);
+  return endDate && endDate < asOf ? "Closed" : "Active";
+}
+
+function buildFinanceLedger() {
+  const now = todayISO();
+  return state.placements.flatMap((placement) => {
+    const candidate = findById(state.candidates, placement.candidateId);
+    const job = findById(state.jobs, placement.jobId || candidate?.jobId);
+    const engagementType = getPlacementEngagementType(placement, job, candidate);
+    const client = findById(state.clients, placement.clientId || "");
+    const shared = {
+      placementId: String(placement.id), placement, candidateId: String(placement.candidateId || ""), candidateName: String(candidate?.name || placement.candidateId || "Unknown candidate"),
+      clientId: String(placement.clientId || ""), clientName: String(client?.name || placement.clientName || "Unassigned client — action required"),
+      recruiter: String(placement.recruiter || candidate?.recruiter || "Unassigned"), jobTitle: String(job?.title || "Unassigned job"), engagementType,
+      contractStatus: getFinanceContractStatus(placement, engagementType, now), startDate: getPlacementFinanceStartDate(placement, engagementType), endDate: getPlacementFinanceEndDate(placement)
+    };
+    if (engagementType === "Contractual") {
+      const actualEnd = shared.endDate && shared.endDate < now ? shared.endDate : now;
+      return getFinanceMonthsBetween(shared.startDate, actualEnd).map((monthKey) => {
+        const rate = getPlacementFinanceRate(placement, engagementType, `${monthKey}-01`);
+        const period = getFinancePeriod(`${monthKey}-01`);
+        return { ...shared, recognitionDate: `${monthKey}-01`, revenue: rate.revenue, cost: rate.cost, margin: rate.revenue - rate.cost, ...period };
+      }).filter((entry) => entry.financialYearLabel);
+    }
+    const period = getFinancePeriod(shared.startDate);
+    if (!period) return [];
+    const rate = getPlacementFinanceRate(placement, engagementType, shared.startDate);
+    return [{ ...shared, recognitionDate: shared.startDate, revenue: rate.revenue, cost: rate.cost, margin: rate.revenue - rate.cost, ...period }];
+  });
+}
+
+function getFinanceContext() {
+  const ledger = buildFinanceLedger();
+  const scopeRows = Array.from(new Map(ledger.map((entry) => [entry.placementId, entry])).values());
+  const matchesScope = (row) => {
+    if (ui.revenue.clientId !== "all" && row.clientId !== ui.revenue.clientId) return false;
+    if (ui.revenue.recruiter !== "all" && row.recruiter !== ui.revenue.recruiter) return false;
+    if (ui.revenue.candidateId !== "all" && row.candidateId !== ui.revenue.candidateId) return false;
+    if (ui.revenue.contractStatus !== "all" && row.contractStatus !== ui.revenue.contractStatus) return false;
+    return !ui.search || `${row.candidateName} ${row.clientName} ${row.recruiter} ${row.jobTitle}`.toLowerCase().includes(ui.search);
+  };
+  const scopedRows = scopeRows.filter(matchesScope);
+  const placementIds = new Set(scopedRows.map((row) => row.placementId));
+  const entries = ledger.filter((entry) => placementIds.has(entry.placementId) && (ui.revenue.period === "all" || ui.revenue.period === `fy:${entry.financialYearStart}` || ui.revenue.period === entry.quarterKey || ui.revenue.period === `fm:${entry.monthKey}`));
+  const total = entries.reduce((sum, entry) => ({ revenue: sum.revenue + entry.revenue, cost: sum.cost + entry.cost, margin: sum.margin + entry.margin }), { revenue: 0, cost: 0, margin: 0 });
+  const aggregate = (key, label) => {
+    const rows = new Map();
+    entries.forEach((entry) => {
+      const value = entry[key];
+      const row = rows.get(value) || { key: value, label: entry[label], order: entry.order, revenue: 0, cost: 0, margin: 0, placements: new Set(), candidates: new Set() };
+      row.revenue += entry.revenue; row.cost += entry.cost; row.margin += entry.margin; row.order = Math.max(row.order, entry.order); row.placements.add(entry.placementId); row.candidates.add(entry.candidateId); rows.set(value, row);
+    });
+    return Array.from(rows.values()).map((row) => ({ ...row, projects: row.placements.size, candidates: row.candidates.size, marginPercent: row.revenue ? (row.margin / row.revenue) * 100 : 0 }));
+  };
+  const months = aggregate("monthKey", "monthLabel").sort((left, right) => left.order - right.order);
+  const quarters = aggregate("quarterKey", "quarterLabel").sort((left, right) => left.order - right.order);
+  const clients = aggregate("clientId", "clientName").map((row) => ({ ...row, revenueShare: total.revenue ? (row.revenue / total.revenue) * 100 : 0 })).sort((left, right) => right.revenue - left.revenue);
+  const tas = aggregate("recruiter", "recruiter").sort((left, right) => right.revenue - left.revenue);
+  const selectedByPlacement = new Map();
+  entries.forEach((entry) => { const row = selectedByPlacement.get(entry.placementId) || { revenue: 0, cost: 0, months: 0 }; row.revenue += entry.revenue; row.cost += entry.cost; row.months += 1; selectedByPlacement.set(entry.placementId, row); });
+  const placements = scopedRows.map((row) => {
+    const selected = selectedByPlacement.get(row.placementId) || { revenue: 0, cost: 0, months: 0 };
+    const lifetimeRevenue = ledger.filter((entry) => entry.placementId === row.placementId).reduce((sum, entry) => sum + entry.revenue, 0);
+    return { ...row, ...selected, lifetimeRevenue };
+  }).sort((left, right) => right.revenue - left.revenue || left.candidateName.localeCompare(right.candidateName));
+  const activeContracts = scopedRows.filter((row) => row.engagementType === "Contractual" && row.contractStatus === "Active");
+  const activeMrr = activeContracts.reduce((sum, row) => sum + getPlacementFinanceRate(row.placement, row.engagementType, todayISO()).revenue, 0);
+  const qualityIssues = scopedRows.flatMap((row) => {
+    const rate = getPlacementFinanceRate(row.placement, row.engagementType, row.startDate || todayISO());
+    return [!row.clientId && `${row.candidateName}: client`, row.engagementType === "Contractual" && !row.startDate && `${row.candidateName}: C2C start date`, !rate.revenue && `${row.candidateName}: revenue rate`].filter(Boolean);
+  });
+  const financialYears = [...new Set(ledger.map((entry) => entry.financialYearStart))].sort((a, b) => b - a);
+  const periodOptions = { financialYears, quarters: [...new Map(ledger.map((entry) => [entry.quarterKey, entry])).values()].sort((a,b) => b.order-a.order), months: [...new Map(ledger.map((entry) => [entry.monthKey, entry])).values()].sort((a,b) => b.order-a.order) };
+  const latest = quarters.at(-1) || null;
+  const latestParts = String(latest?.key || "").split(":");
+  const sameQuarterLastYear = latestParts.length === 3 ? quarters.find((row) => row.key === `fq:${Number(latestParts[1]) - 1}:${latestParts[2]}`) : null;
+  return { ledger, entries, total, months, quarters, clients, tas, placements, activeContracts, activeMrr, qualityIssues, periodOptions, latest, qoqRevenue: calculateGrowth(latest?.revenue, quarters.at(-2)?.revenue), yoyRevenue: calculateGrowth(latest?.revenue, sameQuarterLastYear?.revenue) };
+}
+
 function renderExecutiveBusinessGrowth() {
   if (!canCurrentUserAccessExecutiveFinance()) return "";
   const analytics = getExecutiveBusinessAnalytics();
@@ -8679,30 +8901,76 @@ function renderExecutiveBusinessGrowth() {
   `;
 }
 
+function renderFinanceFilters(finance) {
+  const hasFilters = Object.values(ui.revenue).some((value) => value !== "all");
+  return `
+    <section class="panel finance-filter-panel">
+      <div class="section-heading-row">
+        <div><p class="panel-kicker">Executive finance ledger</p><h2 class="panel-title">Revenue & Margin Intelligence</h2><p class="panel-subtitle">Filter historical C2C recognition and FTE placement fees by financial year, quarter, month, client, TA, candidate, or lifecycle.</p></div>
+        ${hasFilters ? '<button class="tool-btn" type="button" data-action="clear-finance-filters">Clear filters</button>' : ""}
+      </div>
+      <div class="finance-filters">
+        <label><span>Financial period</span><select data-action="finance-period-filter"><option value="all">All financial history</option><optgroup label="Financial year">${finance.periodOptions.financialYears.map((year) => `<option value="fy:${year}" ${ui.revenue.period === `fy:${year}` ? "selected" : ""}>FY ${year}–${String(year + 1).slice(-2)}</option>`).join("")}</optgroup><optgroup label="Quarter">${finance.periodOptions.quarters.map((entry) => `<option value="${entry.quarterKey}" ${ui.revenue.period === entry.quarterKey ? "selected" : ""}>${escapeHtml(entry.quarterLabel)}</option>`).join("")}</optgroup><optgroup label="Month">${finance.periodOptions.months.map((entry) => `<option value="fm:${entry.monthKey}" ${ui.revenue.period === `fm:${entry.monthKey}` ? "selected" : ""}>${escapeHtml(entry.monthLabel)}</option>`).join("")}</optgroup></select></label>
+        <label><span>Client</span><select data-action="finance-client-filter"><option value="all">All clients</option>${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${ui.revenue.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}</select></label>
+        <label><span>TA owner</span><select data-action="finance-recruiter-filter"><option value="all">All TAs</option>${[...new Set(finance.ledger.map((entry) => entry.recruiter))].sort().map((name) => `<option value="${escapeHtml(name)}" ${ui.revenue.recruiter === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label>
+        <label><span>Candidate</span><select data-action="finance-candidate-filter"><option value="all">All deployed candidates</option>${[...new Map(finance.ledger.map((entry) => [entry.candidateId, entry])).values()].map((entry) => `<option value="${escapeHtml(entry.candidateId)}" ${ui.revenue.candidateId === entry.candidateId ? "selected" : ""}>${escapeHtml(entry.candidateName)}</option>`).join("")}</select></label>
+        <label><span>Lifecycle</span><select data-action="finance-contract-status-filter"><option value="all">All placement types</option><option value="Active" ${ui.revenue.contractStatus === "Active" ? "selected" : ""}>Active C2C</option><option value="Closed" ${ui.revenue.contractStatus === "Closed" ? "selected" : ""}>Closed C2C</option><option value="FTE" ${ui.revenue.contractStatus === "FTE" ? "selected" : ""}>FTE one-time</option></select></label>
+      </div>
+    </section>
+  `;
+}
+
+function renderFinanceIntelligence(finance) {
+  const latestLabel = finance.latest?.label || "No recognised quarter";
+  return `
+    ${finance.qualityIssues.length ? `<section class="finance-data-warning"><strong>Finance coverage needs attention</strong><span>${finance.qualityIssues.length} required value${finance.qualityIssues.length === 1 ? " is" : "s are"} missing: ${escapeHtml(finance.qualityIssues.slice(0, 6).join(" · "))}${finance.qualityIssues.length > 6 ? " …" : ""}</span></section>` : ""}
+    <section class="panel executive-growth-panel finance-intelligence-panel">
+      <div class="section-heading-row"><div><p class="panel-kicker">CEO & Managing Director only</p><h2 class="panel-title">Executive Business Growth</h2><p class="panel-subtitle">C2C revenue is recognised every month from its start through closure. FTE revenue is recognised once. Latest recognised quarter: ${escapeHtml(latestLabel)}.</p></div><span class="executive-access-badge">Executive finance</span></div>
+      <div class="metrics-grid executive-growth-metrics">
+        ${metricCard(`${latestLabel} Revenue`, formatCurrency(finance.latest?.revenue || 0))}
+        ${metricCard("Revenue QoQ", formatGrowth(finance.qoqRevenue))}
+        ${metricCard("Revenue YoY", formatGrowth(finance.yoyRevenue))}
+        ${metricCard("Active Contracts", finance.activeContracts.length)}
+        ${metricCard("Recognised Deployments", finance.placements.filter((row) => row.months > 0).length)}
+      </div>
+      <div class="graph-grid executive-growth-charts">
+        ${horizontalChart("Monthly Revenue", "Recognised revenue by month", finance.months.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} deployment${row.projects === 1 ? "" : "s"}` })), formatCurrency)}
+        ${horizontalChart("Quarterly Revenue", "Recognised revenue by financial quarter", finance.quarters.map((row) => ({ label: row.label, value: row.revenue, meta: `${formatPercent(row.marginPercent)} margin` })), formatCurrency)}
+        ${horizontalChart("Quarterly Margin", "Gross margin by financial quarter", finance.quarters.map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) })), formatCurrency)}
+        ${horizontalChart("TA Revenue Contribution", "Recognised revenue attributed to each TA", finance.tas.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} deployment${row.projects === 1 ? "" : "s"} · ${formatPercent(row.marginPercent)} margin` })), formatCurrency)}
+        ${horizontalChart("Client Revenue Contribution", "Contribution in the selected financial period", finance.clients.map((row) => ({ label: row.label, value: row.revenue, meta: `${formatPercent(row.revenueShare)} share · ${row.candidates} candidate${row.candidates === 1 ? "" : "s"}` })), formatCurrency)}
+      </div>
+      <div class="table-wrap executive-client-table"><table><thead><tr><th>Client</th><th>Deployments</th><th>Candidates</th><th>Revenue</th><th>Cost</th><th>Margin</th><th>Share</th></tr></thead><tbody>${finance.clients.length ? finance.clients.map((row) => `<tr><td><strong>${escapeHtml(row.label)}</strong></td><td>${row.projects}</td><td>${row.candidates}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.cost)}</td><td>${formatCurrency(row.margin)}<br /><span class="muted-cell">${formatPercent(row.marginPercent)} margin</span></td><td>${formatPercent(row.revenueShare)}</td></tr>`).join("") : '<tr><td colspan="7" class="empty">No client contribution data matches these filters.</td></tr>'}</tbody></table></div>
+    </section>
+    <section class="panel finance-placement-ledger"><div class="section-heading-row"><div><h2 class="panel-title">Candidate & Contract Ledger</h2><p class="panel-subtitle">Selected-period revenue reconciles to the charts; lifetime recognised revenue remains visible for traceability.</p></div></div><div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Client</th><th>TA</th><th>Type / Lifecycle</th><th>Start → End</th><th>Selected Revenue</th><th>Cost</th><th>Margin</th><th>Lifetime Revenue</th></tr></thead><tbody>${finance.placements.length ? finance.placements.map((row) => { const margin = row.revenue - row.cost; const timeline = row.engagementType === "Contractual" ? `${row.startDate || "Start missing"} → ${row.endDate || "Active"}` : row.startDate || "Recognition date missing"; return `<tr><td><strong>${escapeHtml(row.candidateName)}</strong><br /><span class="muted-cell">${row.months} recognised month${row.months === 1 ? "" : "s"}</span></td><td>${escapeHtml(row.clientName)}</td><td>${escapeHtml(row.recruiter)}</td><td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td><td>${escapeHtml(timeline)}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.cost)}</td><td>${formatCurrency(margin)}<br /><span class="muted-cell">${formatPercent(row.revenue ? (margin / row.revenue) * 100 : 0)} margin</span></td><td>${formatCurrency(row.lifetimeRevenue)}</td></tr>`; }).join("") : '<tr><td colspan="9" class="empty">No recognised revenue matches the selected filters.</td></tr>'}</tbody></table></div></section>
+  `;
+}
+
 function renderRevenueSection() {
   if (!canCurrentUserAccessExecutiveFinance()) {
     return `<section class="panel"><h2 class="panel-title">Executive finance access required</h2><p class="panel-subtitle">Business growth, revenue, margin, and project performance are available only to the CEO and Managing Director.</p></section>`;
   }
-  const placements = filteredPlacements();
-  const revenueTotal = placements.reduce((acc, item) => acc + getPlacementRevenue(item), 0);
-  const costTotal = placements.reduce((acc, item) => acc + calculatePlacementCost(item), 0);
-  const marginTotal = revenueTotal - costTotal;
-  const thisMonthRevenue = placements
-    .filter((item) => isCurrentMonth(getPlacementRecognitionDate(item)))
-    .reduce((acc, item) => acc + getPlacementRevenue(item), 0);
+  const finance = getFinanceContext();
+  const placementRecords = filteredPlacements();
+  const revenueTotal = finance.total.revenue;
+  const costTotal = finance.total.cost;
+  const marginTotal = finance.total.margin;
+  const thisMonthRevenue = finance.months.at(-1)?.revenue || 0;
 
   return `
-    <section class="panel">
+    ${renderFinanceFilters(finance)}
+
+    <section class="panel finance-metrics-panel">
       <div class="metrics-grid">
         ${metricCard("Total Revenue", formatCurrency(revenueTotal))}
         ${metricCard("Revenue This Month", formatCurrency(thisMonthRevenue))}
         ${metricCard("Delivery Cost", formatCurrency(costTotal))}
         ${metricCard("Gross Margin", formatCurrency(marginTotal))}
-        ${metricCard("Placements", placements.length)}
+        ${metricCard("Active C2C MRR", formatCurrency(finance.activeMrr))}
       </div>
     </section>
 
-    ${renderExecutiveBusinessGrowth()}
+    ${renderFinanceIntelligence(finance)}
 
     <section class="panel">
       <h2 class="panel-title">Placement Revenue</h2>
@@ -8720,8 +8988,8 @@ function renderRevenueSection() {
             </tr>
           </thead>
           <tbody>
-            ${placements.length
-              ? placements
+            ${placementRecords.length
+              ? placementRecords
                   .map((item) => {
                     const candidate = findById(state.candidates, item.candidateId);
                     const job = findById(state.jobs, item.jobId);
@@ -13585,6 +13853,13 @@ function normalizePlacements(items) {
       engagementType: String(item.engagementType || ""),
       projectStartDate: String(item.projectStartDate || item.startDate || ""),
       projectEndDate: String(item.projectEndDate || item.endDate || ""),
+      recognitionDate: String(item.recognitionDate || item.date || ""),
+      closureDate: String(item.closureDate || item.projectEndDate || item.endDate || ""),
+      monthlyRevenue: item.monthlyRevenue == null || item.monthlyRevenue === "" ? Number(item.revenue || 0) : normalizeMoneyValue(item.monthlyRevenue),
+      monthlyCost: item.monthlyCost == null || item.monthlyCost === "" ? normalizeMoneyValue(item.cost) : normalizeMoneyValue(item.monthlyCost),
+      oneTimeRevenue: item.oneTimeRevenue == null || item.oneTimeRevenue === "" ? Number(item.revenue || 0) : normalizeMoneyValue(item.oneTimeRevenue),
+      oneTimeCost: item.oneTimeCost == null || item.oneTimeCost === "" ? normalizeMoneyValue(item.cost) : normalizeMoneyValue(item.oneTimeCost),
+      rateHistory: Array.isArray(item.rateHistory) ? item.rateHistory.filter((entry) => entry && typeof entry === "object").map((entry) => ({ effectiveDate: String(entry.effectiveDate || ""), revenue: normalizeMoneyValue(entry.revenue), cost: normalizeMoneyValue(entry.cost), changedAt: String(entry.changedAt || ""), changedBy: String(entry.changedBy || "") })) : [],
       revenue: Number(item.revenue || 0),
       cost: normalizeMoneyValue(item.cost),
       margin:

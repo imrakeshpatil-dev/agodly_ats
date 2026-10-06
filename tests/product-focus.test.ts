@@ -68,3 +68,24 @@ test("executive finance shows QoQ and YoY business charts only to CEO and Managi
   assert.match(browser, /Only the CEO and Managing Director can update revenue or margin/);
   assert.match(browser, /canViewFinance \? metricCard\("Total Revenue"/);
 });
+
+test("finance ledger recognises recurring C2C revenue by month and one-time FTE revenue", async () => {
+  const [browser, authorization] = await Promise.all([
+    readFile(path.join(root, "app.js"), "utf8"),
+    readFile(path.join(root, "lib/server/services/authorization.service.ts"), "utf8")
+  ]);
+
+  assert.match(browser, /function buildFinanceLedger\(\)/);
+  assert.match(browser, /getFinanceMonthsBetween\(shared\.startDate, actualEnd\)/);
+  assert.match(browser, /oneTimeRevenue/);
+  assert.match(browser, /monthlyRevenue/);
+  assert.match(browser, /rateHistory/);
+  assert.match(browser, /finance-period-filter/);
+  assert.match(browser, /finance-client-filter/);
+  assert.match(browser, /finance-recruiter-filter/);
+  assert.match(browser, /finance-candidate-filter/);
+  assert.match(browser, /Candidate & Contract Ledger/);
+  assert.match(browser, /Client Revenue Contribution/);
+  assert.match(authorization, /monthlyRevenue/);
+  assert.match(authorization, /rateHistory/);
+});

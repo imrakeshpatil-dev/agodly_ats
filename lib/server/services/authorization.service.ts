@@ -163,7 +163,7 @@ class AuthorizationService {
         ...snapshot,
         users: snapshot.users.map((user) => omitFields(user, ["revenueTarget"])),
         placements: snapshot.placements.map((placement) =>
-          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])
+          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc", "monthlyRevenue", "monthlyCost", "oneTimeRevenue", "oneTimeCost", "recognitionDate", "closureDate", "rateHistory"])
         ),
         activities: snapshot.activities.filter((activity) => !isFinancialActivity(activity))
       };
@@ -177,7 +177,7 @@ class AuthorizationService {
       .filter((placement) => this.canViewSubmission(context, placement, candidates))
       .map((placement) => this.canViewRevenue(context)
         ? placement
-        : omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"]));
+        : omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc", "monthlyRevenue", "monthlyCost", "oneTimeRevenue", "oneTimeCost", "recognitionDate", "closureDate", "rateHistory"]));
     const activities = snapshot.activities.filter((activity) =>
       this.canViewActivity(context, activity, candidates) && !isFinancialActivity(activity)
     );
@@ -210,7 +210,7 @@ class AuthorizationService {
         ...payload,
         users: payload.users?.map((user) => omitFields(user, ["revenueTarget"])),
         placements: payload.placements?.map((placement) =>
-          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])
+          omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc", "monthlyRevenue", "monthlyCost", "oneTimeRevenue", "oneTimeCost", "recognitionDate", "closureDate", "rateHistory"])
         ),
         activities: payload.activities?.filter((activity) => !isFinancialActivity(activity))
       };
@@ -224,7 +224,7 @@ class AuthorizationService {
       interviews: payload.interviews?.filter((interview) => this.canViewInterview(context, interview, permittedCandidates)),
       placements: payload.placements
         ?.filter((placement) => this.canEditSubmission(context, placement, permittedCandidates))
-        .map((placement) => omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc"])),
+        .map((placement) => omitFields(placement, ["revenue", "cost", "margin", "billingRate", "ctc", "monthlyRevenue", "monthlyCost", "oneTimeRevenue", "oneTimeCost", "recognitionDate", "closureDate", "rateHistory"])),
       activities: payload.activities?.filter((activity) =>
         this.canViewActivity(context, activity, permittedCandidates) && !isFinancialActivity(activity)
       )
