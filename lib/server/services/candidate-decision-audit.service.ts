@@ -76,6 +76,26 @@ class CandidateDecisionAuditService {
     });
   }
 
+  async permanentlyDeleteForCandidate(candidateId: string): Promise<number> {
+    const id = String(candidateId || "").trim();
+    if (!id) return 0;
+
+    return prisma.$transaction(async (transaction) => {
+      const current = await transaction.runtimeState.findUnique({ where: { key: this.stateKey } });
+      const events = normalizeEvents(current?.value);
+      const retained = events.filter((event) => event.candidateId !== id);
+      const removed = events.length - retained.length;
+      if (removed) {
+        await transaction.runtimeState.upsert({
+          where: { key: this.stateKey },
+          create: { key: this.stateKey, value: retained as unknown as Prisma.InputJsonValue },
+          update: { value: retained as unknown as Prisma.InputJsonValue }
+        });
+      }
+      return removed;
+    });
+  }
+
   private async append(event: Omit<CandidateDecisionAuditEvent, "id" | "createdAt">): Promise<CandidateDecisionAuditEvent> {
     const auditEvent: CandidateDecisionAuditEvent = {
       ...event,

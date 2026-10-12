@@ -37,6 +37,7 @@ const API_ROUTES = {
   updateCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}`,
   reparseCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/reparse-ai`,
   deleteCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/delete`,
+  permanentlyDeleteCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}`,
   restoreCandidate: (candidateId) => `/api/candidates/${encodeURIComponent(candidateId)}/restore`,
   aiChat: "/api/ai/chat",
   aiFeedback: "/api/ai/feedback",
@@ -1079,6 +1080,13 @@ function onSectionClick(event) {
     const candidateId = actionNode.dataset.candidateId;
     if (!candidateId) return;
     void deleteCandidateRecord(candidateId);
+    return;
+  }
+
+  if (action === "permanently-delete-candidate") {
+    const candidateId = actionNode.dataset.candidateId;
+    if (!candidateId) return;
+    void permanentlyDeleteCandidateRecord(candidateId);
     return;
   }
 
@@ -6786,7 +6794,7 @@ function getRecruiterPerformanceRows(options = {}) {
   const inPerformancePeriod = (value) => currentMonthOnly ? isCurrentMonth(value) : inSelectedPeriod(value);
   const activeCandidates = state.candidates.filter((item) => !isCandidateDeleted(item) && inPerformancePeriod(item.createdAt));
   const periodInterviews = state.interviews.filter((item) => inPerformancePeriod(item.scheduledAt));
-  const periodPlacements = state.placements.filter((item) => inPerformancePeriod(getPlacementRecognitionDate(item)));
+  const periodPlacements = state.placements.filter((item) => isPlacementLinkedToActiveCandidate(item) && inPerformancePeriod(getPlacementRecognitionDate(item)));
   const recruitingUsers = state.users.filter((user) => recruitingRoles.has(user.role));
   const usersByIdentity = new Map();
   const participants = new Map();
@@ -8603,7 +8611,7 @@ function getExecutiveBusinessAnalytics() {
   let activeContractProjects = 0;
   let completedContractProjects = 0;
 
-  state.placements.forEach((placement) => {
+  state.placements.filter(isPlacementLinkedToActiveCandidate).forEach((placement) => {
     const recognitionDate = getPlacementRecognitionDate(placement);
     const quarter = getQuarterBucket(recognitionDate);
     const candidate = findById(state.candidates, placement.candidateId);
@@ -8793,7 +8801,7 @@ function getFinanceContractStatus(placement, engagementType, asOf = todayISO()) 
 
 function buildFinanceLedger() {
   const now = todayISO();
-  return state.placements.flatMap((placement) => {
+  return state.placements.filter(isPlacementLinkedToActiveCandidate).flatMap((placement) => {
     const candidate = findById(state.candidates, placement.candidateId);
     const job = findById(state.jobs, placement.jobId || candidate?.jobId);
     const engagementType = getPlacementEngagementType(placement, job, candidate);
@@ -9205,7 +9213,7 @@ function renderCandidateRow(item, isSelected = false) {
           <button class="tool-btn" type="button" data-action="edit-candidate" data-candidate-id="${escapeHtml(item.id)}">Edit</button>
           ${
             deleted
-              ? `<button class="tool-btn" type="button" data-action="restore-candidate" data-candidate-id="${escapeHtml(item.id)}" ${canWrite ? "" : "disabled"}>Restore</button>`
+              ? `<button class="tool-btn" type="button" data-action="restore-candidate" data-candidate-id="${escapeHtml(item.id)}" ${canWrite ? "" : "disabled"}>Restore</button>${canCurrentUserAccessExecutiveFinance() ? `<button class="tool-btn danger" type="button" data-action="permanently-delete-candidate" data-candidate-id="${escapeHtml(item.id)}">Erase permanently</button>` : ""}`
               : `<button class="tool-btn danger" type="button" data-action="delete-candidate" data-candidate-id="${escapeHtml(item.id)}" ${canWrite ? "" : "disabled"}>Delete</button>`
           }
         </div>
@@ -10467,6 +10475,66 @@ async function deleteCandidateRecord(candidateId) {
   saveAndRender();
 }
 
+async function permanentlyDeleteCandidateRecord(candidateId) {
+  if (!canCurrentUserAccessExecutiveFinance()) {
+    alert("Only the CEO or Managing Director can permanently erase candidate data.");
+    return;
+  }
+
+  const selectedId = String(candidateId || "").trim();
+  const candidate = findCandidateByIdAnywhere(selectedId);
+  if (!candidate || !isCandidateDeleted(candidate)) {
+    alert("Move the candidate to Deleted Candidates before permanently erasing it.");
+    return;
+  }
+
+  const firstConfirm = confirm(`Permanently erase ${candidate.name}, including linked placement revenue, interviews, activity, decision history, and stored CV files? This cannot be undone.`);
+  if (!firstConfirm) return;
+
+  const confirmationName = prompt(`Type the exact candidate name to permanently erase this record:\n${candidate.name}`);
+  if (String(confirmationName || "").trim() !== candidate.name) {
+    alert("Permanent erase cancelled. The candidate name did not match exactly.");
+    return;
+  }
+
+  if (!ui.api.connected) {
+    alert("Permanent erasure requires the backend database. No local-only data was removed.");
+    return;
+  }
+
+  try {
+    const response = await fetch(buildApiUrl(API_ROUTES.permanentlyDeleteCandidate(selectedId)), {
+      method: "DELETE",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ confirmationName: candidate.name })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.success) {
+      alert(payload?.error?.message || "Candidate data could not be permanently erased.");
+      return;
+    }
+  } catch (_error) {
+    ui.api.connected = false;
+    ui.api.message = "Backend disconnected";
+    renderApiStatus();
+    alert("Candidate data could not be permanently erased because the backend is unavailable.");
+    return;
+  }
+
+  state.candidates = state.candidates.filter((item) => item.id !== selectedId);
+  state.placements = state.placements.filter((item) => String(item.candidateId) !== selectedId);
+  state.interviews = state.interviews.filter((item) => String(item.candidateId) !== selectedId);
+  state.activities = state.activities.filter((item) => String(item.candidateId) !== selectedId);
+  invalidateCandidateDecisionTimeline(selectedId);
+  ui.candidates.selectedId = "";
+  ui.candidates.editDraft = null;
+  ui.candidates.view = "deleted";
+  ui.candidates.inFlightQueryKey = "";
+  ui.candidates.lastQueryKey = "";
+  void ensureCandidatesPageLoaded({ force: true });
+  saveAndRender();
+}
+
 async function restoreCandidateRecord(candidateId) {
   if (!canCurrentUserWriteRecords()) {
     alert("Your role can view candidates but cannot restore records.");
@@ -10730,9 +10798,10 @@ function buildAiMatches(jdAnalysis) {
 }
 
 function calculateAvgDaysToHire() {
-  if (!state.placements.length) return 0;
+  const placements = state.placements.filter(isPlacementLinkedToActiveCandidate);
+  if (!placements.length) return 0;
 
-  const diffs = state.placements
+  const diffs = placements
     .map((placement) => {
       const candidate = findById(state.candidates, placement.candidateId);
       if (!candidate) return null;
@@ -10856,8 +10925,13 @@ function filteredInterviews() {
 
 function filteredPlacements() {
   return state.placements.filter(
-    (item) => canCurrentUserAccessPlacement(item) && inSelectedPeriod(getPlacementRecognitionDate(item)) && matchesSearch(`${item.recruiter} ${item.candidateId} ${item.jobId}`)
+    (item) => isPlacementLinkedToActiveCandidate(item) && canCurrentUserAccessPlacement(item) && inSelectedPeriod(getPlacementRecognitionDate(item)) && matchesSearch(`${item.recruiter} ${item.candidateId} ${item.jobId}`)
   );
+}
+
+function isPlacementLinkedToActiveCandidate(placement) {
+  const candidate = findById(state.candidates, placement?.candidateId);
+  return Boolean(candidate && !isCandidateDeleted(candidate));
 }
 
 function canCurrentUserAccessPlacement(placement) {

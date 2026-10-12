@@ -462,6 +462,24 @@ class CandidateStoreService {
     return { ...candidate };
   }
 
+  async permanentlyDeleteCandidate(candidateId: string): Promise<CandidateRecord> {
+    await this.reloadFromStore();
+
+    const index = this.records.findIndex((item) => item.id === candidateId);
+    if (index < 0) {
+      throw new AppError("Candidate not found", 404);
+    }
+
+    const candidate = this.records[index];
+    if (candidate.status !== "DELETED") {
+      throw new AppError("Move the candidate to Deleted Candidates before permanently erasing it", 400);
+    }
+
+    this.records.splice(index, 1);
+    await this.persist();
+    return { ...candidate };
+  }
+
   private async ensureLoaded(): Promise<void> {
     if (this.initialized) return;
 

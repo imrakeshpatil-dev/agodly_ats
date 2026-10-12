@@ -140,6 +140,32 @@ class AppStateStoreService {
     await this.persist();
   }
 
+  async removeCandidateReferences(candidateId: string): Promise<{ placements: number; interviews: number; activities: number }> {
+    await this.ensureLoaded();
+
+    const id = String(candidateId || "").trim();
+    if (!id) return { placements: 0, interviews: 0, activities: 0 };
+
+    const removeMatchingCandidate = (rows: Array<Record<string, unknown>>) => {
+      const retained = rows.filter((item) => String(item.candidateId || "").trim() !== id);
+      return { retained, removed: rows.length - retained.length };
+    };
+
+    const placements = removeMatchingCandidate(this.state.placements);
+    const interviews = removeMatchingCandidate(this.state.interviews);
+    const activities = removeMatchingCandidate(this.state.activities);
+    this.state.placements = placements.retained;
+    this.state.interviews = interviews.retained;
+    this.state.activities = activities.retained;
+    this.state.bulkUpload = removeBulkCandidateReferences(this.state.bulkUpload, id);
+    this.state.bulkUploadByUser = Object.fromEntries(
+      Object.entries(this.state.bulkUploadByUser).map(([ownerId, snapshot]) => [ownerId, removeBulkCandidateReferences(snapshot, id)])
+    );
+
+    await this.persist();
+    return { placements: placements.removed, interviews: interviews.removed, activities: activities.removed };
+  }
+
   async recordBulkUploadForUser(ownerId: string, bulkUpload: Record<string, unknown>): Promise<void> {
     await this.ensureLoaded();
 
@@ -319,6 +345,28 @@ const normalizeBulkUploadSnapshot = (value: Record<string, unknown>): Record<str
   duplicates: normalizeRows(value.duplicates, []).slice(0, 120),
   candidateNotes: normalizeRows(value.candidateNotes, []).slice(0, 120)
 });
+
+const removeBulkCandidateReferences = (snapshot: Record<string, unknown>, candidateId: string): Record<string, unknown> => {
+  const removeCandidateRows = (value: unknown): Array<Record<string, unknown>> =>
+    normalizeRows(value, []).filter((item) => String(item.id || item.candidateId || "").trim() !== candidateId);
+  const removeMatchIds = (value: unknown): Array<Record<string, unknown>> =>
+    normalizeRows(value, []).map((item) => ({
+      ...item,
+      matchedCandidateIds: Array.isArray(item.matchedCandidateIds)
+        ? item.matchedCandidateIds.filter((id) => String(id || "").trim() !== candidateId)
+        : item.matchedCandidateIds
+    }));
+
+  return {
+    ...snapshot,
+    candidateNotes: removeCandidateRows(snapshot.candidateNotes),
+    blockedDuplicates: removeMatchIds(snapshot.blockedDuplicates),
+    duplicates: normalizeRows(snapshot.duplicates, []).filter((item) => {
+      const duplicate = item.duplicateCandidate;
+      return !duplicate || typeof duplicate !== "object" || String((duplicate as Record<string, unknown>).id || "").trim() !== candidateId;
+    })
+  };
+};
 
 export const mergeBulkUploadSnapshots = (
   snapshots: Array<Record<string, unknown>>

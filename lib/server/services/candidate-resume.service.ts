@@ -71,6 +71,29 @@ class CandidateResumeService {
 
     return buildDataPreservingResumePatch(candidate, version, extraction, parsingStatus, actor, now);
   }
+
+  async permanentlyDeleteCandidateFiles(candidate: CandidateRecord): Promise<number> {
+    const data = candidate.parsedData && typeof candidate.parsedData === "object" ? candidate.parsedData : {};
+    const versions = Array.isArray(data.resumeVersions) ? data.resumeVersions : [];
+    const fileNames = new Set(
+      [candidate.resumeUrl, ...versions.map((value) => value && typeof value === "object" ? (value as Record<string, unknown>).storedFileName || (value as Record<string, unknown>).resumeUrl : "")]
+        .map((value) => path.basename(String(value || "").trim()))
+        .filter(Boolean)
+    );
+
+    let removed = 0;
+    for (const fileName of fileNames) {
+      const filePath = path.resolve(this.resumeDir, fileName);
+      if (path.dirname(filePath) !== this.resumeDir) continue;
+      try {
+        await fs.rm(filePath, { force: true });
+        removed += 1;
+      } catch {
+        // The candidate record is still purged; a missing legacy file must not block it.
+      }
+    }
+    return removed;
+  }
 }
 
 export const buildDataPreservingResumePatch = (

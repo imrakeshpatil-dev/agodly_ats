@@ -60,6 +60,29 @@ test("finance edits are explicit and survive a background state refresh until sa
   assert.match(browser, /clearFinanceEditDraft\(candidate\.id\)/);
 });
 
+test("deleted candidates cannot contribute to revenue, and permanent erasure removes their linked data", async () => {
+  const [browser, route, controller, appState, candidateStore, audit] = await Promise.all([
+    readFile(path.join(root, "app.js"), "utf8"),
+    readFile(path.join(root, "app/api/candidates/[id]/route.ts"), "utf8"),
+    readFile(path.join(root, "lib/server/controllers/candidate.controller.ts"), "utf8"),
+    readFile(path.join(root, "lib/server/services/app-state-store.service.ts"), "utf8"),
+    readFile(path.join(root, "lib/server/services/candidate-store.service.ts"), "utf8"),
+    readFile(path.join(root, "lib/server/services/candidate-decision-audit.service.ts"), "utf8")
+  ]);
+
+  assert.match(browser, /state\.placements\.filter\(isPlacementLinkedToActiveCandidate\)\.flatMap/);
+  assert.match(browser, /function isPlacementLinkedToActiveCandidate\(placement\)/);
+  assert.match(browser, /data-action="permanently-delete-candidate"/);
+  assert.match(browser, /Type the exact candidate name to permanently erase this record/);
+  assert.match(route, /export const DELETE = handle\(permanentlyDeleteCandidate, \{ auth: true \}\)/);
+  assert.match(controller, /Only the CEO or Managing Director can permanently erase candidate data/);
+  assert.match(controller, /removeCandidateReferences\(candidateId\)/);
+  assert.match(controller, /permanentlyDeleteForCandidate\(candidateId\)/);
+  assert.match(candidateStore, /Move the candidate to Deleted Candidates before permanently erasing it/);
+  assert.match(appState, /async removeCandidateReferences\(candidateId: string\)/);
+  assert.match(audit, /async permanentlyDeleteForCandidate\(candidateId: string\)/);
+});
+
 test("executive finance shows QoQ and YoY business charts only to CEO and Managing Director", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 

@@ -473,6 +473,41 @@ export const restoreCandidate = async (req: Request, res: Response): Promise<voi
   });
 };
 
+export const permanentlyDeleteCandidate = async (req: Request, res: Response): Promise<void> => {
+  const candidateId = String(req.params.id || "").trim();
+  if (!candidateId) {
+    throw new AppError("Candidate id is required", 400);
+  }
+
+  const authUser = (req as Partial<AuthenticatedRequest>).authUser;
+  if (!authUser || !["CEO", "Managing Director"].includes(authUser.role)) {
+    throw new AppError("Only the CEO or Managing Director can permanently erase candidate data", 403);
+  }
+
+  const context = await getAuthorizationContext(req);
+  const existingCandidate = await getCandidateOrDeny(req, context, candidateId, "candidate-permanent-delete");
+  await assertCanMutateCandidate(req, existingCandidate);
+
+  if (existingCandidate.status !== "DELETED") {
+    throw new AppError("Move the candidate to Deleted Candidates before permanently erasing it", 400);
+  }
+
+  const confirmationName = String(req.body?.confirmationName || "").trim();
+  if (confirmationName !== existingCandidate.name) {
+    throw new AppError("Type the exact candidate name to confirm permanent erasure", 400);
+  }
+
+  const references = await appStateStoreService.removeCandidateReferences(candidateId);
+  const auditEvents = await candidateDecisionAuditService.permanentlyDeleteForCandidate(candidateId);
+  const resumeFiles = await candidateResumeService.permanentlyDeleteCandidateFiles(existingCandidate);
+  await candidateStoreService.permanentlyDeleteCandidate(candidateId);
+
+  res.status(200).json({
+    success: true,
+    removed: { ...references, auditEvents, resumeFiles }
+  });
+};
+
 export const reparseCandidateWithAI = async (req: Request, res: Response): Promise<void> => {
   const candidateId = String(req.params.id || "").trim();
   if (!candidateId) {
