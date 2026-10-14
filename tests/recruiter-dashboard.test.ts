@@ -13,8 +13,9 @@ test("recruiter dashboard keeps financial targets in the executive tracker only"
   assert.match(browser, /My Monthly Performance/);
   assert.match(browser, /Target progress &amp; leaderboard standing/);
   assert.match(browser, /currentMonthOnly: true/);
-  assert.match(browser, /Candidate Target/);
-  assert.match(browser, /canViewFinance \? metricCard\("Revenue Target"/);
+  assert.match(browser, /Monthly Candidate Target/);
+  assert.match(browser, /canViewFinance \? metricCard\("Monthly Revenue Target"/);
+  assert.match(browser, /annual run-rate/);
   assert.match(browser, /Leaderboard Rank/);
 });
 

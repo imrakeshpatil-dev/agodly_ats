@@ -3613,12 +3613,12 @@ function renderTargetAchievementTracker() {
     <section class="panel">
       <div class="section-heading-row">
         <div>
-          <h2 class="panel-title">TA Target vs Achievement</h2>
-          <p class="panel-subtitle">Manual candidate and revenue targets with live achievement from assigned candidates and onboarded revenue.</p>
+          <h2 class="panel-title">Monthly TA Target vs Achievement</h2>
+          <p class="panel-subtitle">Candidate and revenue targets are monthly. Annual run-rate is shown only as context; live achievement is for the current month.</p>
         </div>
         <div class="tracker-summary">
-          <span>${totalCandidates}/${totalCandidateTarget || "-"} candidates</span>
-          <span>${formatCurrency(totalRevenue)} / ${formatCurrency(totalRevenueTarget)}</span>
+          <span>${totalCandidates}/${totalCandidateTarget || "-"} monthly candidates</span>
+          <span>${formatCurrency(totalRevenue)} / ${formatCurrency(totalRevenueTarget)} monthly revenue</span>
           <span>Margin ${formatCurrency(totalMargin)}</span>
         </div>
       </div>
@@ -3627,11 +3627,11 @@ function renderTargetAchievementTracker() {
           <thead>
             <tr>
               <th>TA</th>
-              <th>Candidate Target</th>
+              <th>Monthly Candidate Target</th>
               <th>Achievement</th>
               <th>Onboarded</th>
-              <th>Revenue Target</th>
-              <th>Revenue Generated</th>
+              <th>Monthly Revenue Target</th>
+              <th>Revenue This Month</th>
               <th>Margin</th>
               <th>Action</th>
             </tr>
@@ -3658,6 +3658,7 @@ function renderTargetAchievementTracker() {
                               value="${Number(row.monthlyTarget || 0)}"
                               ${editable && row.userId ? "" : "disabled"}
                             />
+                            <span class="muted-cell">${Number(row.monthlyTarget || 0) * 12} annual run-rate</span>
                           </td>
                           <td>
                             <div class="target-cell">
@@ -3676,6 +3677,7 @@ function renderTargetAchievementTracker() {
                               value="${Number(row.revenueTarget || 0)}"
                               ${editable && row.userId ? "" : "disabled"}
                             />
+                            <span class="muted-cell">${formatCurrency(Number(row.revenueTarget || 0) * 12)} annual run-rate</span>
                           </td>
                           <td>
                             <div class="target-cell">
@@ -3691,7 +3693,7 @@ function renderTargetAchievementTracker() {
                             <button class="tool-btn" type="button" data-action="save-ta-targets" data-user-id="${escapeHtml(row.userId)}" ${
                               editable && row.userId ? "" : "disabled"
                             }>
-                              Save Target
+                              Save Monthly Target
                             </button>
                           </td>
                         </tr>
@@ -3759,18 +3761,18 @@ function renderRecruiterDashboardPerformance() {
       </div>
 
       <div class="metrics-grid">
-        ${metricCard("Candidate Target", row.monthlyTarget || "Not set")}
+        ${metricCard("Monthly Candidate Target", row.monthlyTarget || "Not set")}
         ${metricCard("Candidates Added", row.candidates)}
         ${metricCard("Submitted", row.submitted)}
         ${metricCard("Joined", row.joined)}
-        ${canViewFinance ? metricCard("Revenue Target", formatCurrency(row.revenueTarget)) : ""}
+        ${canViewFinance ? metricCard("Monthly Revenue Target", formatCurrency(row.revenueTarget)) : ""}
         ${metricCard("Leaderboard Rank", `#${rank} / ${ranked.length}`)}
       </div>
 
       <div class="graph-grid recruiter-progress-grid">
         <article class="chart-card">
           <div class="chart-card-head">
-            <h3>Candidate target</h3>
+            <h3>Monthly candidate target</h3>
             <p>${row.candidates} achieved · ${candidateRemaining} remaining</p>
           </div>
           <div class="target-cell recruiter-target-progress">
@@ -3781,7 +3783,7 @@ function renderRecruiterDashboardPerformance() {
         </article>
         ${canViewFinance ? `<article class="chart-card">
           <div class="chart-card-head">
-            <h3>Revenue target</h3>
+            <h3>Monthly revenue target</h3>
             <p>${formatCurrency(row.revenue)} achieved · ${formatCurrency(revenueRemaining)} remaining</p>
           </div>
           <div class="target-cell recruiter-target-progress">
@@ -6239,8 +6241,8 @@ function renderUsersSection() {
               <th>Role</th>
               <th>Team</th>
               <th>Manager</th>
-              <th>Candidate Target</th>
-              ${canViewFinance ? "<th>Revenue Target</th>" : ""}
+              <th>Monthly Candidate Target</th>
+              ${canViewFinance ? "<th>Monthly Revenue Target</th>" : ""}
               <th>Status</th>
               <th>Password</th>
               <th>Created</th>
@@ -6685,7 +6687,7 @@ function renderRecruiterPerformanceSection() {
   const targetRows = ranked.slice(0, 8).map((item) => ({
     label: item.name,
     value: Math.min(item.targetAttainment, 100),
-    meta: `${item.candidates}/${item.monthlyTarget || "-"} target`
+    meta: `${item.candidates}/${item.monthlyTarget || "-"} monthly target`
   }));
   const stageTotals = [
     { label: "Qualified", value: rows.reduce((acc, item) => acc + item.qualified, 0), meta: "Ready profiles" },
@@ -6709,10 +6711,10 @@ function renderRecruiterPerformanceSection() {
 
     <section class="panel">
       <h2 class="panel-title">Performance Snapshot</h2>
-      <p class="panel-subtitle">Graphical recruiter score, candidate-target attainment, and funnel movement</p>
+      <p class="panel-subtitle">Graphical recruiter score, monthly candidate-target attainment, and funnel movement</p>
       <div class="graph-grid">
         ${horizontalChart("Score Leaderboard", "Weighted by candidates, submissions, interviews, and joins", topScoreRows)}
-        ${horizontalChart("Target Attainment", `Average target attainment: ${formatPercent(avgTarget)}`, targetRows, formatPercent, 100)}
+        ${horizontalChart("Monthly Target Attainment", `Average monthly target attainment: ${formatPercent(avgTarget)}`, targetRows, formatPercent, 100)}
         ${horizontalChart("Team Funnel Output", "Total movement across recruiter-owned candidates", stageTotals)}
       </div>
     </section>
@@ -6734,8 +6736,8 @@ function renderRecruiterPerformanceSection() {
               <th>Offers</th>
               <th>Joined</th>
               <th>Conversion</th>
-              <th>Target</th>
-              ${canViewFinance ? "<th>Revenue Target</th><th>Revenue</th><th>Margin</th>" : ""}
+              <th>Monthly Target</th>
+              ${canViewFinance ? "<th>Monthly Revenue Target</th><th>Revenue</th><th>Margin</th>" : ""}
               <th>Score</th>
             </tr>
           </thead>
