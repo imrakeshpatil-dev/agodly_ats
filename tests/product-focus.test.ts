@@ -123,3 +123,12 @@ test("finance ledger recognises recurring C2C revenue by month and one-time FTE 
   assert.match(authorization, /monthlyRevenue/);
   assert.match(authorization, /rateHistory/);
 });
+
+test("revenue charts present the most recent month and quarter first", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /const monthsNewestFirst = \[\.\.\.finance\.months\]\.reverse\(\)/);
+  assert.match(browser, /const quartersNewestFirst = \[\.\.\.finance\.quarters\]\.reverse\(\)/);
+  assert.match(browser, /Recognised revenue by month · newest first/);
+  assert.match(browser, /Recognised revenue by financial quarter · newest first/);
+});

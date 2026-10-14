@@ -8881,8 +8881,8 @@ function renderExecutiveBusinessGrowth() {
   if (!canCurrentUserAccessExecutiveFinance()) return "";
   const analytics = getExecutiveBusinessAnalytics();
   const latestLabel = analytics.latest?.label || "No completed quarter";
-  const revenueRows = analytics.series.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} project${row.projects === 1 ? "" : "s"}` }));
-  const marginRows = analytics.series.map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) }));
+  const revenueRows = [...analytics.series].reverse().map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} project${row.projects === 1 ? "" : "s"}` }));
+  const marginRows = [...analytics.series].reverse().map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) }));
   const taRows = analytics.taRows.map((row) => ({ label: row.recruiter, value: row.revenue, meta: `${row.projects} project${row.projects === 1 ? "" : "s"} · ${formatPercent(row.marginPercent)} margin` }));
   const clientRows = analytics.clientRows.map((row) => ({
     label: row.client,
@@ -8971,10 +8971,12 @@ function renderFinanceFilters(finance) {
 
 function renderFinanceIntelligence(finance) {
   const latestLabel = finance.latest?.label || "No recognised quarter";
+  const monthsNewestFirst = [...finance.months].reverse();
+  const quartersNewestFirst = [...finance.quarters].reverse();
   return `
     ${finance.qualityIssues.length ? `<section class="finance-data-warning"><strong>Finance coverage needs attention</strong><span>${finance.qualityIssues.length} required value${finance.qualityIssues.length === 1 ? " is" : "s are"} missing: ${escapeHtml(finance.qualityIssues.slice(0, 6).join(" · "))}${finance.qualityIssues.length > 6 ? " …" : ""}</span></section>` : ""}
     <section class="panel executive-growth-panel finance-intelligence-panel">
-      <div class="section-heading-row"><div><p class="panel-kicker">CEO & Managing Director only</p><h2 class="panel-title">Executive Business Growth</h2><p class="panel-subtitle">C2C revenue is recognised every month from its start through closure. FTE revenue is recognised once. Latest recognised quarter: ${escapeHtml(latestLabel)}.</p></div><span class="executive-access-badge">Executive finance</span></div>
+      <div class="section-heading-row"><div><p class="panel-kicker">CEO & Managing Director only</p><h2 class="panel-title">Executive Business Growth</h2><p class="panel-subtitle">C2C revenue is recognised every month from its start through closure. FTE revenue is recognised once. Latest recognised quarter: ${escapeHtml(latestLabel)}. Periods are shown newest first.</p></div><span class="executive-access-badge">Executive finance</span></div>
       <div class="metrics-grid executive-growth-metrics">
         ${metricCard(`${latestLabel} Revenue`, formatCurrency(finance.latest?.revenue || 0))}
         ${metricCard("Revenue QoQ", formatGrowth(finance.qoqRevenue))}
@@ -8983,9 +8985,9 @@ function renderFinanceIntelligence(finance) {
         ${metricCard("Recognised Deployments", finance.placements.filter((row) => row.months > 0).length)}
       </div>
       <div class="graph-grid executive-growth-charts">
-        ${horizontalChart("Monthly Revenue", "Recognised revenue by month", finance.months.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} deployment${row.projects === 1 ? "" : "s"}` })), formatCurrency)}
-        ${horizontalChart("Quarterly Revenue", "Recognised revenue by financial quarter", finance.quarters.map((row) => ({ label: row.label, value: row.revenue, meta: `${formatPercent(row.marginPercent)} margin` })), formatCurrency)}
-        ${horizontalChart("Quarterly Margin", "Gross margin by financial quarter", finance.quarters.map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) })), formatCurrency)}
+        ${horizontalChart("Monthly Revenue", "Recognised revenue by month · newest first", monthsNewestFirst.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} deployment${row.projects === 1 ? "" : "s"}` })), formatCurrency)}
+        ${horizontalChart("Quarterly Revenue", "Recognised revenue by financial quarter · newest first", quartersNewestFirst.map((row) => ({ label: row.label, value: row.revenue, meta: `${formatPercent(row.marginPercent)} margin` })), formatCurrency)}
+        ${horizontalChart("Quarterly Margin", "Gross margin by financial quarter · newest first", quartersNewestFirst.map((row) => ({ label: row.label, value: row.margin, meta: formatCurrency(row.margin) })), formatCurrency)}
         ${horizontalChart("TA Revenue Contribution", "Recognised revenue attributed to each TA", finance.tas.map((row) => ({ label: row.label, value: row.revenue, meta: `${row.projects} deployment${row.projects === 1 ? "" : "s"} · ${formatPercent(row.marginPercent)} margin` })), formatCurrency)}
         ${horizontalChart("Client Revenue Contribution", "Contribution in the selected financial period", finance.clients.map((row) => ({ label: row.label, value: row.revenue, meta: `${formatPercent(row.revenueShare)} share · ${row.candidates} candidate${row.candidates === 1 ? "" : "s"}` })), formatCurrency)}
       </div>
