@@ -174,7 +174,15 @@ jobs:
             pm2 restart agodly-ats
             pm2 save
             echo ">> Waiting for readiness..."
-            sleep 3
-            curl -fsS http://127.0.0.1:3000/ready
+            ready=0
+            for attempt in $(seq 1 10); do
+              if curl -fsS http://127.0.0.1:3000/ready; then
+                ready=1
+                break
+              fi
+              echo "Readiness attempt $attempt/10 is not ready yet"
+              sleep 3
+            done
+            test "$ready" = "1"
             echo ""
             echo "Deploy OK: $(git rev-parse HEAD)"
