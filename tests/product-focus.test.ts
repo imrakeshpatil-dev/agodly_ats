@@ -124,6 +124,21 @@ test("finance ledger recognises recurring C2C revenue by month and one-time FTE 
   assert.match(authorization, /rateHistory/);
 });
 
+test("operating finance separates the current month from closed and historical contracts", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /period: "current-month"/);
+  assert.match(browser, /function isFinanceEntryInPeriod/);
+  assert.match(browser, /if \(period === "previous-month"\)/);
+  assert.match(browser, /if \(period === "current-quarter"\)/);
+  assert.match(browser, /if \(period === "previous-quarter"\)/);
+  assert.match(browser, /if \(startDate && startDate > asOf\) return "Scheduled"/);
+  assert.match(browser, /if \(!shared\.startDate \|\| shared\.startDate > now\) return \[\]/);
+  assert.match(browser, /Current Month Revenue/);
+  assert.match(browser, /Previous Quarter Margin/);
+  assert.match(browser, /closed contracts are historical only/);
+});
+
 test("revenue charts present the most recent month and quarter first", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 

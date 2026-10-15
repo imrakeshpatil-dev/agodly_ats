@@ -444,7 +444,7 @@ const ui = {
     aiShortlist: null
   },
   revenue: {
-    period: "all",
+    period: "current-month",
     clientId: "all",
     recruiter: "all",
     candidateId: "all",
@@ -813,7 +813,7 @@ function onSectionClick(event) {
   }
 
   if (action === "clear-finance-filters") {
-    ui.revenue = { period: "all", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all" };
+    ui.revenue = { period: "current-month", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all" };
     renderSection();
     return;
   }
@@ -3308,17 +3308,14 @@ function renderDashboardSection() {
 
   const candidates = filteredCandidates();
   const jobs = filteredJobs();
-  const placements = filteredPlacements();
   const currentUser = getCurrentUser();
   const isFounder = canCurrentUserAccessFounderWorkspace();
   const canViewFinance = canCurrentUserAccessExecutiveFinance();
+  const operatingFinance = canViewFinance ? getFinanceContext({ period: "current-month", ignoreFilters: true }) : null;
 
   const totalCandidates = candidates.length;
   const totalJobs = jobs.length;
   const submittedThisMonth = candidates.filter((item) => candidateHasReachedStage(item, "Submitted") && isCurrentMonth(item.createdAt)).length;
-  const joinedThisMonth = placements.filter((item) => isCurrentMonth(getPlacementRecognitionDate(item))).length;
-  const totalRevenue = placements.reduce((acc, item) => acc + getPlacementRevenue(item), 0);
-  const totalMargin = placements.reduce((acc, item) => acc + calculatePlacementMargin(item), 0);
   const closureTracker = getClosureTrackerMetrics(candidates);
 
   const funnel = PIPELINE_STAGES.map((stage) => ({
@@ -3370,16 +3367,17 @@ function renderDashboardSection() {
         ${metricCard("Total Candidates", totalCandidates)}
         ${metricCard("Total Jobs", totalJobs)}
         ${metricCard("Submitted This Month", submittedThisMonth)}
-        ${metricCard("Joined This Month", joinedThisMonth)}
-        ${canViewFinance ? metricCard("Total Revenue", formatCurrency(totalRevenue)) : ""}
-        ${canViewFinance ? metricCard("Total Margin", formatCurrency(totalMargin)) : ""}
+        ${canViewFinance ? metricCard("Active Pipeline Candidates", activePipeline) : metricCard("Joined This Month", candidates.filter((item) => item.stage === "Onboarded" && isCurrentMonth(item.updatedAt || item.createdAt)).length)}
+        ${canViewFinance ? metricCard("Active Deployed Candidates", operatingFinance.activeDeployedCandidates.length) : ""}
+        ${canViewFinance ? metricCard(`${operatingFinance.selectedPeriodLabel} Revenue`, formatCurrency(operatingFinance.total.revenue)) : ""}
+        ${canViewFinance ? metricCard(`${operatingFinance.selectedPeriodLabel} Margin`, formatCurrency(operatingFinance.total.margin)) : ""}
       </div>
+      ${canViewFinance ? `<p class="panel-subtitle finance-as-of">Operating figures are recognised for ${escapeHtml(operatingFinance.selectedPeriodLabel)} only, as of ${escapeHtml(operatingFinance.asOf)}. Active C2C MRR: <strong>${formatCurrency(operatingFinance.activeMrr)}</strong> across ${operatingFinance.activeContracts.length} active contracts; closed contracts are historical only.</p>` : ""}
     </section>
 
     ${renderRecruiterDailyWorkspace(candidates)}
     ${renderClosureTrackerPanel(closureTracker)}
     ${canViewFinance ? renderTargetAchievementTracker() : renderRecruiterDashboardPerformance()}
-    ${canViewFinance ? renderOnboardedRevenueTracker() : ""}
 
     <section class="panel">
       <h2 class="panel-title">${isFounder ? "Operations Alerts" : "My Daily Queue"}</h2>
@@ -3602,7 +3600,7 @@ function diagnosticTile(label, value) {
 
 function renderTargetAchievementTracker() {
   if (!canCurrentUserAccessExecutiveFinance()) return "";
-  const rows = getRecruiterPerformanceRows();
+  const rows = getRecruiterPerformanceRows({ currentMonthOnly: true });
   const totalCandidateTarget = rows.reduce((acc, item) => acc + Number(item.monthlyTarget || 0), 0);
   const totalCandidates = rows.reduce((acc, item) => acc + item.candidates, 0);
   const totalRevenueTarget = rows.reduce((acc, item) => acc + Number(item.revenueTarget || 0), 0);
@@ -3614,7 +3612,7 @@ function renderTargetAchievementTracker() {
       <div class="section-heading-row">
         <div>
           <h2 class="panel-title">Monthly TA Target vs Achievement</h2>
-          <p class="panel-subtitle">Candidate and revenue targets are monthly. Annual run-rate is shown only as context; live achievement is for the current month.</p>
+          <p class="panel-subtitle">Candidate and revenue targets are monthly. Revenue and margin are recognised in the current calendar month only; closed contracts are excluded.</p>
         </div>
         <div class="tracker-summary">
           <span>${totalCandidates}/${totalCandidateTarget || "-"} monthly candidates</span>
@@ -6527,7 +6525,7 @@ function renderReportingManagerSelect({ managerId = "", excludedUserId = "", id,
 
 function renderTeamDashboardSection() {
   const canViewFinance = canCurrentUserAccessExecutiveFinance();
-  const rows = getRecruiterPerformanceRows();
+  const rows = getRecruiterPerformanceRows({ currentMonthOnly: true });
   const teams = getTeamPerformanceRows(rows);
   const activeUsers = state.users.filter((item) => item.status === "Active");
   const founderUsers = activeUsers.filter((item) => FOUNDER_ROLES.has(item.role));
@@ -6590,7 +6588,7 @@ function renderTeamDashboardSection() {
 
     <section class="panel">
       <h2 class="panel-title">Team Performance</h2>
-      <p class="panel-subtitle">Team-wise output across candidates, submissions, interviews, and joins${canViewFinance ? ", revenue, and margin" : ""}</p>
+      <p class="panel-subtitle">Current-month output across candidates, submissions, interviews, and joins${canViewFinance ? ", recognised revenue, and margin" : ""}</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -6673,7 +6671,7 @@ function renderTeamDashboardSection() {
 
 function renderRecruiterPerformanceSection() {
   const canViewFinance = canCurrentUserAccessExecutiveFinance();
-  const rows = getRecruiterPerformanceRows();
+  const rows = getRecruiterPerformanceRows({ currentMonthOnly: true });
   const ranked = rankRecruiterPerformanceRows(rows);
   const top = ranked[0];
   const atRisk = ranked.filter((item) => item.targetAttainment < 50 && item.monthlyTarget > 0).length;
@@ -6711,7 +6709,7 @@ function renderRecruiterPerformanceSection() {
 
     <section class="panel">
       <h2 class="panel-title">Performance Snapshot</h2>
-      <p class="panel-subtitle">Graphical recruiter score, monthly candidate-target attainment, and funnel movement</p>
+      <p class="panel-subtitle">Current-month recruiter score, candidate-target attainment, and funnel movement</p>
       <div class="graph-grid">
         ${horizontalChart("Score Leaderboard", "Weighted by candidates, submissions, interviews, and joins", topScoreRows)}
         ${horizontalChart("Monthly Target Attainment", `Average monthly target attainment: ${formatPercent(avgTarget)}`, targetRows, formatPercent, 100)}
@@ -6721,7 +6719,7 @@ function renderRecruiterPerformanceSection() {
 
     <section class="panel">
       <h2 class="panel-title">Recruiter Performance</h2>
-      <p class="panel-subtitle">Output, conversion, pipeline quality and target attainment by recruiter</p>
+      <p class="panel-subtitle">Current-month output, conversion, pipeline quality and target attainment by recruiter</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -6797,6 +6795,9 @@ function getRecruiterPerformanceRows(options = {}) {
   const activeCandidates = state.candidates.filter((item) => !isCandidateDeleted(item) && inPerformancePeriod(item.createdAt));
   const periodInterviews = state.interviews.filter((item) => inPerformancePeriod(item.scheduledAt));
   const periodPlacements = state.placements.filter((item) => isPlacementLinkedToActiveCandidate(item) && inPerformancePeriod(getPlacementRecognitionDate(item)));
+  const periodFinanceEntries = buildFinanceLedger().filter((entry) =>
+    currentMonthOnly ? entry.monthKey === getFinanceCurrentMonthKey() : isFinanceEntryInPeriod(entry, ui.revenue.period)
+  );
   const recruitingUsers = state.users.filter((user) => recruitingRoles.has(user.role));
   const usersByIdentity = new Map();
   const participants = new Map();
@@ -6825,6 +6826,7 @@ function getRecruiterPerformanceRows(options = {}) {
   recruitingUsers.forEach((user) => addParticipant(user.name || user.email, user));
   activeCandidates.forEach((candidate) => addParticipant(candidate.recruiter));
   periodPlacements.forEach((placement) => addParticipant(placement.recruiter));
+  periodFinanceEntries.forEach((entry) => addParticipant(entry.recruiter));
 
   return Array.from(participants.values())
     .map((participant) => {
@@ -6843,8 +6845,9 @@ function getRecruiterPerformanceRows(options = {}) {
       const offers = candidates.filter((candidate) => ["Offer", "Onboarded"].includes(candidate.stage)).length;
       const joined = joinedCandidateIds.size;
       const dropped = candidates.filter((candidate) => candidate.stage === "Dropped").length;
-      const revenue = placements.reduce((acc, placement) => acc + getPlacementRevenue(placement), 0);
-      const cost = placements.reduce((acc, placement) => acc + calculatePlacementCost(placement), 0);
+      const financeEntries = periodFinanceEntries.filter((entry) => participant.aliases.has(normalizePersonKey(entry.recruiter)));
+      const revenue = financeEntries.reduce((acc, entry) => acc + entry.revenue, 0);
+      const cost = financeEntries.reduce((acc, entry) => acc + entry.cost, 0);
       const margin = revenue - cost;
       const monthlyTarget = normalizeMonthlyTarget(user.monthlyTarget, user.role || "Recruiter");
       const revenueTarget = normalizeRevenueTarget(user.revenueTarget);
@@ -8784,6 +8787,60 @@ function getFinancePeriod(value) {
   };
 }
 
+function getFinanceCurrentMonthKey(asOf = todayISO()) {
+  return getFinanceMonthKey(asOf);
+}
+
+function getPreviousFinanceMonthKey(asOf = todayISO()) {
+  const date = getFinanceDateParts(asOf);
+  if (!date) return "";
+  const previous = new Date(date.year, date.month - 2, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getPreviousFinanceQuarterKey(asOf = todayISO()) {
+  const period = getFinancePeriod(asOf);
+  if (!period) return "";
+  const financialYear = period.quarter === 1 ? period.financialYearStart - 1 : period.financialYearStart;
+  const quarter = period.quarter === 1 ? 4 : period.quarter - 1;
+  return `fq:${financialYear}:${quarter}`;
+}
+
+function isFinanceEntryInPeriod(entry, period = "all", asOf = todayISO()) {
+  const current = getFinancePeriod(asOf);
+  const currentMonthKey = getFinanceCurrentMonthKey(asOf);
+  if (period === "all") return true;
+  if (period === "current-month") return entry.monthKey === currentMonthKey;
+  if (period === "previous-month") return entry.monthKey === getPreviousFinanceMonthKey(asOf);
+  if (period === "current-quarter") return entry.quarterKey === current?.quarterKey;
+  if (period === "previous-quarter") return entry.quarterKey === getPreviousFinanceQuarterKey(asOf);
+  if (period === "fytd") return entry.financialYearStart === current?.financialYearStart && entry.recognitionDate <= asOf;
+  return period === `fy:${entry.financialYearStart}` || period === entry.quarterKey || period === `fm:${entry.monthKey}`;
+}
+
+function getFinancePeriodLabel(period = "all", asOf = todayISO()) {
+  const current = getFinancePeriod(asOf);
+  if (period === "current-month") return `${getFinanceMonthLabel(getFinanceCurrentMonthKey(asOf))} (current month)`;
+  if (period === "previous-month") return `${getFinanceMonthLabel(getPreviousFinanceMonthKey(asOf))} (previous month)`;
+  if (period === "current-quarter") return `${current?.quarterLabel || "Current quarter"} (current quarter)`;
+  if (period === "previous-quarter") {
+    const [financialYear, quarter] = getPreviousFinanceQuarterKey(asOf).replace("fq:", "").split(":");
+    return financialYear ? `FY ${financialYear}–${String(Number(financialYear) + 1).slice(-2)} · Q${quarter} (previous quarter)` : "Previous quarter";
+  }
+  if (period === "fytd") return `${current?.financialYearLabel || "Current financial year"} to date`;
+  if (period === "all") return "All financial history";
+  if (String(period).startsWith("fm:")) return getFinanceMonthLabel(String(period).slice(3));
+  if (String(period).startsWith("fq:")) {
+    const [, financialYear, quarter] = String(period).split(":");
+    return financialYear ? `FY ${financialYear}–${String(Number(financialYear) + 1).slice(-2)} · Q${quarter}` : "Selected quarter";
+  }
+  if (String(period).startsWith("fy:")) {
+    const financialYear = String(period).slice(3);
+    return financialYear ? `FY ${financialYear}–${String(Number(financialYear) + 1).slice(-2)}` : "Selected financial year";
+  }
+  return period;
+}
+
 function getPlacementFinanceRate(placement, engagementType, effectiveDate) {
   const fallbackRevenue = Number(engagementType === "Contractual" ? placement?.monthlyRevenue ?? placement?.revenue : placement?.oneTimeRevenue ?? placement?.revenue) || 0;
   const fallbackCost = Number(engagementType === "Contractual" ? placement?.monthlyCost ?? placement?.cost : placement?.oneTimeCost ?? placement?.cost) || 0;
@@ -8797,7 +8854,9 @@ function getPlacementFinanceRate(placement, engagementType, effectiveDate) {
 
 function getFinanceContractStatus(placement, engagementType, asOf = todayISO()) {
   if (engagementType !== "Contractual") return "FTE";
+  const startDate = getPlacementFinanceStartDate(placement, engagementType);
   const endDate = getPlacementFinanceEndDate(placement);
+  if (startDate && startDate > asOf) return "Scheduled";
   return endDate && endDate < asOf ? "Closed" : "Active";
 }
 
@@ -8822,6 +8881,7 @@ function buildFinanceLedger() {
         return { ...shared, recognitionDate: `${monthKey}-01`, revenue: rate.revenue, cost: rate.cost, margin: rate.revenue - rate.cost, ...period };
       }).filter((entry) => entry.financialYearLabel);
     }
+    if (!shared.startDate || shared.startDate > now) return [];
     const period = getFinancePeriod(shared.startDate);
     if (!period) return [];
     const rate = getPlacementFinanceRate(placement, engagementType, shared.startDate);
@@ -8829,10 +8889,14 @@ function buildFinanceLedger() {
   });
 }
 
-function getFinanceContext() {
+function getFinanceContext(options = {}) {
+  const asOf = options.asOf || todayISO();
+  const selectedPeriod = options.period || ui.revenue.period;
+  const ignoreFilters = Boolean(options.ignoreFilters);
   const ledger = buildFinanceLedger();
   const scopeRows = Array.from(new Map(ledger.map((entry) => [entry.placementId, entry])).values());
   const matchesScope = (row) => {
+    if (ignoreFilters) return true;
     if (ui.revenue.clientId !== "all" && row.clientId !== ui.revenue.clientId) return false;
     if (ui.revenue.recruiter !== "all" && row.recruiter !== ui.revenue.recruiter) return false;
     if (ui.revenue.candidateId !== "all" && row.candidateId !== ui.revenue.candidateId) return false;
@@ -8841,7 +8905,7 @@ function getFinanceContext() {
   };
   const scopedRows = scopeRows.filter(matchesScope);
   const placementIds = new Set(scopedRows.map((row) => row.placementId));
-  const entries = ledger.filter((entry) => placementIds.has(entry.placementId) && (ui.revenue.period === "all" || ui.revenue.period === `fy:${entry.financialYearStart}` || ui.revenue.period === entry.quarterKey || ui.revenue.period === `fm:${entry.monthKey}`));
+  const entries = ledger.filter((entry) => placementIds.has(entry.placementId) && isFinanceEntryInPeriod(entry, selectedPeriod, asOf));
   const total = entries.reduce((sum, entry) => ({ revenue: sum.revenue + entry.revenue, cost: sum.cost + entry.cost, margin: sum.margin + entry.margin }), { revenue: 0, cost: 0, margin: 0 });
   const aggregate = (key, label) => {
     const rows = new Map();
@@ -8864,17 +8928,34 @@ function getFinanceContext() {
     return { ...row, ...selected, lifetimeRevenue };
   }).sort((left, right) => right.revenue - left.revenue || left.candidateName.localeCompare(right.candidateName));
   const activeContracts = scopedRows.filter((row) => row.engagementType === "Contractual" && row.contractStatus === "Active");
-  const activeMrr = activeContracts.reduce((sum, row) => sum + getPlacementFinanceRate(row.placement, row.engagementType, todayISO()).revenue, 0);
-  const qualityIssues = scopedRows.flatMap((row) => {
-    const rate = getPlacementFinanceRate(row.placement, row.engagementType, row.startDate || todayISO());
-    return [!row.clientId && `${row.candidateName}: client`, row.engagementType === "Contractual" && !row.startDate && `${row.candidateName}: C2C start date`, !rate.revenue && `${row.candidateName}: revenue rate`].filter(Boolean);
+  const activeDeployedCandidates = scopedRows.filter((row) => row.contractStatus === "Active" || (row.engagementType === "FTE" && row.startDate && row.startDate <= asOf));
+  const activeMrr = activeContracts.reduce((sum, row) => sum + getPlacementFinanceRate(row.placement, row.engagementType, asOf).revenue, 0);
+  const qualityIssues = state.placements.filter(isPlacementLinkedToActiveCandidate).flatMap((placement) => {
+    const candidate = findById(state.candidates, placement.candidateId);
+    const job = findById(state.jobs, placement.jobId || candidate?.jobId);
+    const engagementType = getPlacementEngagementType(placement, job, candidate);
+    const candidateName = String(candidate?.name || placement.candidateId || "Unknown candidate");
+    const startDate = getPlacementFinanceStartDate(placement, engagementType);
+    const endDate = getPlacementFinanceEndDate(placement);
+    const rate = getPlacementFinanceRate(placement, engagementType, startDate || asOf);
+    return [
+      !placement.clientId && `${candidateName}: client`,
+      engagementType === "Contractual" && !startDate && `${candidateName}: C2C start date`,
+      engagementType === "Contractual" && !endDate && `${candidateName}: C2C end date`,
+      engagementType === "FTE" && !startDate && `${candidateName}: FTE recognition date`,
+      !rate.revenue && `${candidateName}: revenue rate`
+    ].filter(Boolean);
   });
   const financialYears = [...new Set(ledger.map((entry) => entry.financialYearStart))].sort((a, b) => b - a);
   const periodOptions = { financialYears, quarters: [...new Map(ledger.map((entry) => [entry.quarterKey, entry])).values()].sort((a,b) => b.order-a.order), months: [...new Map(ledger.map((entry) => [entry.monthKey, entry])).values()].sort((a,b) => b.order-a.order) };
   const latest = quarters.at(-1) || null;
   const latestParts = String(latest?.key || "").split(":");
   const sameQuarterLastYear = latestParts.length === 3 ? quarters.find((row) => row.key === `fq:${Number(latestParts[1]) - 1}:${latestParts[2]}`) : null;
-  return { ledger, entries, total, months, quarters, clients, tas, placements, activeContracts, activeMrr, qualityIssues, periodOptions, latest, qoqRevenue: calculateGrowth(latest?.revenue, quarters.at(-2)?.revenue), yoyRevenue: calculateGrowth(latest?.revenue, sameQuarterLastYear?.revenue) };
+  return {
+    ledger, entries, total, months, quarters, clients, tas, placements, activeContracts, activeDeployedCandidates, activeMrr, qualityIssues,
+    periodOptions, latest, selectedPeriod, selectedPeriodLabel: getFinancePeriodLabel(selectedPeriod, asOf), asOf,
+    qoqRevenue: calculateGrowth(latest?.revenue, quarters.at(-2)?.revenue), yoyRevenue: calculateGrowth(latest?.revenue, sameQuarterLastYear?.revenue)
+  };
 }
 
 function renderExecutiveBusinessGrowth() {
@@ -8951,37 +9032,37 @@ function renderExecutiveBusinessGrowth() {
 }
 
 function renderFinanceFilters(finance) {
-  const hasFilters = Object.values(ui.revenue).some((value) => value !== "all");
+  const hasFilters = ui.revenue.period !== "current-month" || [ui.revenue.clientId, ui.revenue.recruiter, ui.revenue.candidateId, ui.revenue.contractStatus].some((value) => value !== "all");
   return `
     <section class="panel finance-filter-panel">
       <div class="section-heading-row">
-        <div><p class="panel-kicker">Executive finance ledger</p><h2 class="panel-title">Revenue & Margin Intelligence</h2><p class="panel-subtitle">Filter historical C2C recognition and FTE placement fees by financial year, quarter, month, client, TA, candidate, or lifecycle.</p></div>
+        <div><p class="panel-kicker">Executive finance ledger</p><h2 class="panel-title">Revenue & Margin Intelligence</h2><p class="panel-subtitle">Viewing <strong>${escapeHtml(finance.selectedPeriodLabel)}</strong>. C2C revenue is recognised month by month; FTE is recognised once.</p></div>
         ${hasFilters ? '<button class="tool-btn" type="button" data-action="clear-finance-filters">Clear filters</button>' : ""}
       </div>
       <div class="finance-filters">
-        <label><span>Financial period</span><select data-action="finance-period-filter"><option value="all">All financial history</option><optgroup label="Financial year">${finance.periodOptions.financialYears.map((year) => `<option value="fy:${year}" ${ui.revenue.period === `fy:${year}` ? "selected" : ""}>FY ${year}–${String(year + 1).slice(-2)}</option>`).join("")}</optgroup><optgroup label="Quarter">${finance.periodOptions.quarters.map((entry) => `<option value="${entry.quarterKey}" ${ui.revenue.period === entry.quarterKey ? "selected" : ""}>${escapeHtml(entry.quarterLabel)}</option>`).join("")}</optgroup><optgroup label="Month">${finance.periodOptions.months.map((entry) => `<option value="fm:${entry.monthKey}" ${ui.revenue.period === `fm:${entry.monthKey}` ? "selected" : ""}>${escapeHtml(entry.monthLabel)}</option>`).join("")}</optgroup></select></label>
+        <label><span>Financial period</span><select data-action="finance-period-filter"><optgroup label="Operating & comparison"><option value="current-month" ${ui.revenue.period === "current-month" ? "selected" : ""}>Current month</option><option value="previous-month" ${ui.revenue.period === "previous-month" ? "selected" : ""}>Previous month</option><option value="current-quarter" ${ui.revenue.period === "current-quarter" ? "selected" : ""}>Current quarter</option><option value="previous-quarter" ${ui.revenue.period === "previous-quarter" ? "selected" : ""}>Previous quarter</option><option value="fytd" ${ui.revenue.period === "fytd" ? "selected" : ""}>Financial year to date</option></optgroup><option value="all">All financial history</option><optgroup label="Financial year">${finance.periodOptions.financialYears.map((year) => `<option value="fy:${year}" ${ui.revenue.period === `fy:${year}` ? "selected" : ""}>FY ${year}–${String(year + 1).slice(-2)}</option>`).join("")}</optgroup><optgroup label="Quarter">${finance.periodOptions.quarters.map((entry) => `<option value="${entry.quarterKey}" ${ui.revenue.period === entry.quarterKey ? "selected" : ""}>${escapeHtml(entry.quarterLabel)}</option>`).join("")}</optgroup><optgroup label="Month">${finance.periodOptions.months.map((entry) => `<option value="fm:${entry.monthKey}" ${ui.revenue.period === `fm:${entry.monthKey}` ? "selected" : ""}>${escapeHtml(entry.monthLabel)}</option>`).join("")}</optgroup></select></label>
         <label><span>Client</span><select data-action="finance-client-filter"><option value="all">All clients</option>${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${ui.revenue.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}</select></label>
         <label><span>TA owner</span><select data-action="finance-recruiter-filter"><option value="all">All TAs</option>${[...new Set(finance.ledger.map((entry) => entry.recruiter))].sort().map((name) => `<option value="${escapeHtml(name)}" ${ui.revenue.recruiter === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label>
         <label><span>Candidate</span><select data-action="finance-candidate-filter"><option value="all">All deployed candidates</option>${[...new Map(finance.ledger.map((entry) => [entry.candidateId, entry])).values()].map((entry) => `<option value="${escapeHtml(entry.candidateId)}" ${ui.revenue.candidateId === entry.candidateId ? "selected" : ""}>${escapeHtml(entry.candidateName)}</option>`).join("")}</select></label>
-        <label><span>Lifecycle</span><select data-action="finance-contract-status-filter"><option value="all">All placement types</option><option value="Active" ${ui.revenue.contractStatus === "Active" ? "selected" : ""}>Active C2C</option><option value="Closed" ${ui.revenue.contractStatus === "Closed" ? "selected" : ""}>Closed C2C</option><option value="FTE" ${ui.revenue.contractStatus === "FTE" ? "selected" : ""}>FTE one-time</option></select></label>
+        <label><span>Lifecycle</span><select data-action="finance-contract-status-filter"><option value="all">All placement types</option><option value="Scheduled" ${ui.revenue.contractStatus === "Scheduled" ? "selected" : ""}>Scheduled C2C</option><option value="Active" ${ui.revenue.contractStatus === "Active" ? "selected" : ""}>Active C2C</option><option value="Closed" ${ui.revenue.contractStatus === "Closed" ? "selected" : ""}>Closed C2C</option><option value="FTE" ${ui.revenue.contractStatus === "FTE" ? "selected" : ""}>FTE one-time</option></select></label>
       </div>
     </section>
   `;
 }
 
 function renderFinanceIntelligence(finance) {
-  const latestLabel = finance.latest?.label || "No recognised quarter";
   const monthsNewestFirst = [...finance.months].reverse();
   const quartersNewestFirst = [...finance.quarters].reverse();
   return `
     ${finance.qualityIssues.length ? `<section class="finance-data-warning"><strong>Finance coverage needs attention</strong><span>${finance.qualityIssues.length} required value${finance.qualityIssues.length === 1 ? " is" : "s are"} missing: ${escapeHtml(finance.qualityIssues.slice(0, 6).join(" · "))}${finance.qualityIssues.length > 6 ? " …" : ""}</span></section>` : ""}
     <section class="panel executive-growth-panel finance-intelligence-panel">
-      <div class="section-heading-row"><div><p class="panel-kicker">CEO & Managing Director only</p><h2 class="panel-title">Executive Business Growth</h2><p class="panel-subtitle">C2C revenue is recognised every month from its start through closure. FTE revenue is recognised once. Latest recognised quarter: ${escapeHtml(latestLabel)}. Periods are shown newest first.</p></div><span class="executive-access-badge">Executive finance</span></div>
+      <div class="section-heading-row"><div><p class="panel-kicker">CEO & Managing Director only</p><h2 class="panel-title">Executive Business Growth</h2><p class="panel-subtitle">${escapeHtml(finance.selectedPeriodLabel)} recognised figures, as of ${escapeHtml(finance.asOf)}. C2C revenue stops after closure; FTE is recognised once. Historical periods are shown newest first.</p></div><span class="executive-access-badge">Executive finance</span></div>
       <div class="metrics-grid executive-growth-metrics">
-        ${metricCard(`${latestLabel} Revenue`, formatCurrency(finance.latest?.revenue || 0))}
-        ${metricCard("Revenue QoQ", formatGrowth(finance.qoqRevenue))}
-        ${metricCard("Revenue YoY", formatGrowth(finance.yoyRevenue))}
+        ${metricCard(`${finance.selectedPeriodLabel} Revenue`, formatCurrency(finance.total.revenue))}
+        ${metricCard(`${finance.selectedPeriodLabel} Margin`, formatCurrency(finance.total.margin))}
+        ${metricCard("Active C2C MRR", formatCurrency(finance.activeMrr))}
         ${metricCard("Active Contracts", finance.activeContracts.length)}
+        ${metricCard("Active Deployed Candidates", finance.activeDeployedCandidates.length)}
         ${metricCard("Recognised Deployments", finance.placements.filter((row) => row.months > 0).length)}
       </div>
       <div class="graph-grid executive-growth-charts">
@@ -8997,64 +9078,53 @@ function renderFinanceIntelligence(finance) {
   `;
 }
 
+function renderFinancePeriodComparison() {
+  const currentMonth = getFinanceContext({ period: "current-month" });
+  const previousMonth = getFinanceContext({ period: "previous-month" });
+  const currentQuarter = getFinanceContext({ period: "current-quarter" });
+  const previousQuarter = getFinanceContext({ period: "previous-quarter" });
+
+  return `
+    <section class="panel finance-metrics-panel">
+      <div class="section-heading-row"><div><h2 class="panel-title">Period comparison</h2><p class="panel-subtitle">Recognised revenue and margin by completed calendar period. The selected client, TA, candidate, and lifecycle filters apply here.</p></div></div>
+      <div class="metrics-grid">
+        ${metricCard("Current Month Margin", formatCurrency(currentMonth.total.margin))}
+        ${metricCard("Previous Month Margin", formatCurrency(previousMonth.total.margin))}
+        ${metricCard("Current Quarter Margin", formatCurrency(currentQuarter.total.margin))}
+        ${metricCard("Previous Quarter Margin", formatCurrency(previousQuarter.total.margin))}
+        ${metricCard("Current Quarter Revenue", formatCurrency(currentQuarter.total.revenue))}
+        ${metricCard("Previous Quarter Revenue", formatCurrency(previousQuarter.total.revenue))}
+      </div>
+    </section>
+  `;
+}
+
 function renderRevenueSection() {
   if (!canCurrentUserAccessExecutiveFinance()) {
     return `<section class="panel"><h2 class="panel-title">Executive finance access required</h2><p class="panel-subtitle">Business growth, revenue, margin, and project performance are available only to the CEO and Managing Director.</p></section>`;
   }
   const finance = getFinanceContext();
-  const placementRecords = filteredPlacements();
-  const revenueTotal = finance.total.revenue;
-  const costTotal = finance.total.cost;
-  const marginTotal = finance.total.margin;
-  const thisMonthRevenue = finance.months.at(-1)?.revenue || 0;
+  const operatingFinance = getFinanceContext({ period: "current-month", ignoreFilters: true });
 
   return `
     ${renderFinanceFilters(finance)}
 
     <section class="panel finance-metrics-panel">
+      <div class="section-heading-row"><div><h2 class="panel-title">Operating now</h2><p class="panel-subtitle">Current calendar month only, as of ${escapeHtml(operatingFinance.asOf)}. Closed contracts and previous-month revenue are excluded.</p></div></div>
       <div class="metrics-grid">
-        ${metricCard("Total Revenue", formatCurrency(revenueTotal))}
-        ${metricCard("Revenue This Month", formatCurrency(thisMonthRevenue))}
-        ${metricCard("Delivery Cost", formatCurrency(costTotal))}
-        ${metricCard("Gross Margin", formatCurrency(marginTotal))}
-        ${metricCard("Active C2C MRR", formatCurrency(finance.activeMrr))}
+        ${metricCard("Current Month Revenue", formatCurrency(operatingFinance.total.revenue))}
+        ${metricCard("Current Month Cost", formatCurrency(operatingFinance.total.cost))}
+        ${metricCard("Current Month Margin", formatCurrency(operatingFinance.total.margin))}
+        ${metricCard("Active C2C MRR", formatCurrency(operatingFinance.activeMrr))}
+        ${metricCard("Active Deployed Candidates", operatingFinance.activeDeployedCandidates.length)}
+        ${metricCard("Active C2C Contracts", operatingFinance.activeContracts.length)}
       </div>
     </section>
+
+    ${renderFinancePeriodComparison()}
 
     ${renderFinanceIntelligence(finance)}
 
-    <section class="panel">
-      <h2 class="panel-title">Placement Revenue</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Candidate</th>
-              <th>Job</th>
-              <th>Recruiter</th>
-              <th>Date</th>
-              <th>Revenue</th>
-              <th>Cost</th>
-              <th>Margin</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${placementRecords.length
-              ? placementRecords
-                  .map((item) => {
-                    const candidate = findById(state.candidates, item.candidateId);
-                    const job = findById(state.jobs, item.jobId);
-                    const margin = calculatePlacementMargin(item);
-                    const revenue = getPlacementRevenue(item);
-                    const marginPercent = revenue ? Math.round((margin / revenue) * 100) : 0;
-                    return `<tr><td>${escapeHtml(candidate?.name || item.candidateId)}</td><td>${escapeHtml(job?.title || item.jobId)}</td><td>${escapeHtml(item.recruiter)}</td><td>${escapeHtml(getPlacementRecognitionDate(item))}</td><td>${formatCurrency(revenue)}</td><td>${formatCurrency(calculatePlacementCost(item))}</td><td>${formatCurrency(margin)}<br /><span class="muted-cell">${formatPercent(marginPercent)}</span></td></tr>`;
-                  })
-                  .join("")
-              : `<tr><td colspan="7" class="empty">No revenue data available.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </section>
   `;
 }
 
