@@ -134,9 +134,25 @@ test("operating finance separates the current month from closed and historical c
   assert.match(browser, /if \(period === "previous-quarter"\)/);
   assert.match(browser, /if \(startDate && startDate > asOf\) return "Scheduled"/);
   assert.match(browser, /if \(!shared\.startDate \|\| shared\.startDate > now\) return \[\]/);
-  assert.match(browser, /Current Month Revenue/);
+  assert.match(browser, /MTD Recognised Revenue/);
   assert.match(browser, /Previous Quarter Margin/);
   assert.match(browser, /closed contracts are historical only/);
+});
+
+test("contractual finance prorates monthly rates by actual worked weekdays without a holiday calendar", async () => {
+  const [browser, authorization] = await Promise.all([
+    readFile(path.join(root, "app.js"), "utf8"),
+    readFile(path.join(root, "lib/server/services/authorization.service.ts"), "utf8")
+  ]);
+
+  assert.match(browser, /function countFinanceWeekdays/);
+  assert.match(browser, /function getContractWorkdayContext/);
+  assert.match(browser, /actualWorkedDaysByMonth/);
+  assert.match(browser, /dailyRevenue \* workdays\.actualWorkedDays/);
+  assert.match(browser, /C2C actual workdays/);
+  assert.match(browser, /No holiday calendar is maintained/);
+  assert.match(browser, /Actual C2C workdays saved/);
+  assert.match(authorization, /actualWorkedDaysByMonth/);
 });
 
 test("revenue charts present the most recent month and quarter first", async () => {

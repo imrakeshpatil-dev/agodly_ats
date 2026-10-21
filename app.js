@@ -58,6 +58,7 @@ const BULK_CV_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SHARED_STATE_REFRESH_INTERVAL_MS = 15_000;
 let pipelineDragState = null;
 const financeEditDrafts = new Map();
+const financeWorkdayDrafts = new Map();
 
 const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
@@ -863,6 +864,11 @@ function onSectionClick(event) {
     return;
   }
 
+  if (action === "save-contract-workdays") {
+    saveContractWorkdays(actionNode.dataset.candidateId || "", actionNode.dataset.monthKey || "");
+    return;
+  }
+
   if (action === "open-bulk-picker") {
     openBulkPicker("all");
     return;
@@ -1406,6 +1412,11 @@ function onSectionClick(event) {
 }
 
 function onSectionChange(event) {
+  if (event.target.matches("[data-finance-workdays]")) {
+    setFinanceWorkdayDraftValue(event.target.dataset.candidateId, event.target.dataset.monthKey, event.target.value);
+    return;
+  }
+
   if (event.target.matches("[data-finance-field]")) {
     setFinanceEditDraftValue(event.target.dataset.candidateId, event.target.dataset.financeField, event.target.value);
     return;
@@ -1692,6 +1703,11 @@ function onSectionChange(event) {
 }
 
 function onSectionInput(event) {
+  if (event.target.matches("[data-finance-workdays]")) {
+    setFinanceWorkdayDraftValue(event.target.dataset.candidateId, event.target.dataset.monthKey, event.target.value);
+    return;
+  }
+
   if (event.target.matches("[data-finance-field]")) {
     setFinanceEditDraftValue(event.target.dataset.candidateId, event.target.dataset.financeField, event.target.value);
     return;
@@ -7141,7 +7157,8 @@ function savePlacementFinanceRow(candidateId) {
       projectStartDate: engagementType === "Contractual" ? projectStartDate : "",
       projectEndDate: "",
       recognitionDate: engagementType === "FTE" ? recognitionDate || todayISO() : "",
-      rateHistory: []
+      rateHistory: [],
+      actualWorkedDaysByMonth: []
     };
     state.placements.push(placement);
   }
@@ -7173,6 +7190,69 @@ function savePlacementFinanceRow(candidateId) {
 
   recordActivity("revenue", `${engagementType === "Contractual" ? "C2C monthly rate" : "FTE one-time fee"} updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · closed ${projectEndDate}` : ""}`);
   clearFinanceEditDraft(candidate.id);
+  saveAndRender();
+}
+
+function financeWorkdayDraftKey(candidateId, monthKey) {
+  return `${String(candidateId || "")}:${String(monthKey || "")}`;
+}
+
+function getFinanceWorkdayDraftValue(candidateId, monthKey, fallback = "") {
+  const key = financeWorkdayDraftKey(candidateId, monthKey);
+  return financeWorkdayDrafts.has(key) ? financeWorkdayDrafts.get(key) : fallback;
+}
+
+function setFinanceWorkdayDraftValue(candidateId, monthKey, value) {
+  const key = financeWorkdayDraftKey(candidateId, monthKey);
+  if (!candidateId || !/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return;
+  financeWorkdayDrafts.set(key, value);
+}
+
+function clearFinanceWorkdayDraft(candidateId, monthKey) {
+  financeWorkdayDrafts.delete(financeWorkdayDraftKey(candidateId, monthKey));
+}
+
+function hasFinanceWorkdayDrafts() {
+  return financeWorkdayDrafts.size > 0;
+}
+
+function getPlacementActualWorkedDays(placement, monthKey) {
+  const entry = (Array.isArray(placement?.actualWorkedDaysByMonth) ? placement.actualWorkedDaysByMonth : [])
+    .find((item) => String(item?.monthKey || "") === String(monthKey || ""));
+  const days = Number(entry?.workedDays);
+  return Number.isInteger(days) && days >= 0 ? days : null;
+}
+
+function saveContractWorkdays(candidateId, monthKey) {
+  if (!canCurrentUserAccessExecutiveFinance()) {
+    alert("Only the CEO and Managing Director can update contractual workdays.");
+    return;
+  }
+  const candidate = findById(state.candidates, candidateId);
+  const placement = findPlacementForCandidate(candidateId);
+  if (!candidate || !placement || !/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return;
+  if (!canCurrentUserManageTaName(candidate.recruiter)) {
+    alert("You can update only your own contractual workdays. CEO and Managing Director can update all TA finance rows.");
+    return;
+  }
+  const job = findById(state.jobs, placement.jobId || candidate.jobId);
+  if (getPlacementEngagementType(placement, job, candidate) !== "Contractual") return;
+
+  const workdays = getContractWorkdayContext(placement, monthKey, getFinanceTodayISO());
+  const inputValue = getFinanceWorkdayDraftValue(candidateId, monthKey, "");
+  const actualWorkedDays = Number(inputValue);
+  if (!Number.isInteger(actualWorkedDays) || actualWorkedDays < 0 || actualWorkedDays > workdays.eligibleWorkingDays) {
+    alert(`Enter whole actual worked days from 0 to ${workdays.eligibleWorkingDays} for ${getFinanceMonthLabel(monthKey)}.`);
+    return;
+  }
+
+  const existing = Array.isArray(placement.actualWorkedDaysByMonth) ? placement.actualWorkedDaysByMonth : [];
+  placement.actualWorkedDaysByMonth = [
+    ...existing.filter((item) => String(item?.monthKey || "") !== monthKey),
+    { monthKey, workedDays: actualWorkedDays, savedAt: new Date().toISOString(), savedBy: getCurrentUser()?.name || "Executive finance" }
+  ].sort((left, right) => String(left.monthKey).localeCompare(String(right.monthKey)));
+  recordActivity("revenue", `Actual C2C workdays saved for ${candidate.name}: ${actualWorkedDays}/${workdays.eligibleWorkingDays} billable weekdays in ${getFinanceMonthLabel(monthKey)}.`);
+  clearFinanceWorkdayDraft(candidateId, monthKey);
   saveAndRender();
 }
 
@@ -8744,6 +8824,17 @@ function getFinanceDateParts(value) {
   return year && month >= 1 && month <= 12 ? { year, month } : null;
 }
 
+function getFinanceTodayISO() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
 function getFinanceMonthKey(value) {
   const date = getFinanceDateParts(value);
   return date ? `${date.year}-${String(date.month).padStart(2, "0")}` : "";
@@ -8769,6 +8860,44 @@ function getFinanceMonthsBetween(startDate, endDate) {
   return months;
 }
 
+function getFinanceMonthBounds(monthKey) {
+  const match = String(monthKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const finalDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  return { startDate: `${match[1]}-${match[2]}-01`, endDate: `${match[1]}-${match[2]}-${String(finalDay).padStart(2, "0")}` };
+}
+
+function countFinanceWeekdays(startDate, endDate) {
+  if (!startDate || !endDate || startDate > endDate) return 0;
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  let total = 0;
+  while (cursor <= end) {
+    const day = cursor.getUTCDay();
+    if (day >= 1 && day <= 5) total += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return total;
+}
+
+function getContractWorkdayContext(placement, monthKey, asOf = getFinanceTodayISO()) {
+  const bounds = getFinanceMonthBounds(monthKey);
+  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const closureDate = getPlacementFinanceEndDate(placement);
+  if (!bounds || !startDate) return { standardWorkingDays: 0, eligibleWorkingDays: 0, actualWorkedDays: 0, isFinal: false, isManual: false };
+  const activeEnd = closureDate && closureDate < asOf ? closureDate : asOf;
+  const windowStart = startDate > bounds.startDate ? startDate : bounds.startDate;
+  const windowEnd = activeEnd < bounds.endDate ? activeEnd : bounds.endDate;
+  const standardWorkingDays = countFinanceWeekdays(bounds.startDate, bounds.endDate);
+  const eligibleWorkingDays = countFinanceWeekdays(windowStart, windowEnd);
+  const savedWorkedDays = getPlacementActualWorkedDays(placement, monthKey);
+  const actualWorkedDays = savedWorkedDays === null ? eligibleWorkingDays : Math.min(savedWorkedDays, eligibleWorkingDays);
+  const isFinal = Boolean(savedWorkedDays !== null || (closureDate && closureDate < bounds.startDate));
+  return { standardWorkingDays, eligibleWorkingDays, actualWorkedDays, isFinal, isManual: savedWorkedDays !== null };
+}
+
 function getFinancePeriod(value) {
   const date = getFinanceDateParts(value);
   if (!date) return null;
@@ -8787,18 +8916,18 @@ function getFinancePeriod(value) {
   };
 }
 
-function getFinanceCurrentMonthKey(asOf = todayISO()) {
+function getFinanceCurrentMonthKey(asOf = getFinanceTodayISO()) {
   return getFinanceMonthKey(asOf);
 }
 
-function getPreviousFinanceMonthKey(asOf = todayISO()) {
+function getPreviousFinanceMonthKey(asOf = getFinanceTodayISO()) {
   const date = getFinanceDateParts(asOf);
   if (!date) return "";
   const previous = new Date(date.year, date.month - 2, 1);
   return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function getPreviousFinanceQuarterKey(asOf = todayISO()) {
+function getPreviousFinanceQuarterKey(asOf = getFinanceTodayISO()) {
   const period = getFinancePeriod(asOf);
   if (!period) return "";
   const financialYear = period.quarter === 1 ? period.financialYearStart - 1 : period.financialYearStart;
@@ -8806,7 +8935,7 @@ function getPreviousFinanceQuarterKey(asOf = todayISO()) {
   return `fq:${financialYear}:${quarter}`;
 }
 
-function isFinanceEntryInPeriod(entry, period = "all", asOf = todayISO()) {
+function isFinanceEntryInPeriod(entry, period = "all", asOf = getFinanceTodayISO()) {
   const current = getFinancePeriod(asOf);
   const currentMonthKey = getFinanceCurrentMonthKey(asOf);
   if (period === "all") return true;
@@ -8818,7 +8947,7 @@ function isFinanceEntryInPeriod(entry, period = "all", asOf = todayISO()) {
   return period === `fy:${entry.financialYearStart}` || period === entry.quarterKey || period === `fm:${entry.monthKey}`;
 }
 
-function getFinancePeriodLabel(period = "all", asOf = todayISO()) {
+function getFinancePeriodLabel(period = "all", asOf = getFinanceTodayISO()) {
   const current = getFinancePeriod(asOf);
   if (period === "current-month") return `${getFinanceMonthLabel(getFinanceCurrentMonthKey(asOf))} (current month)`;
   if (period === "previous-month") return `${getFinanceMonthLabel(getPreviousFinanceMonthKey(asOf))} (previous month)`;
@@ -8848,11 +8977,11 @@ function getPlacementFinanceRate(placement, engagementType, effectiveDate) {
     .map((item) => ({ effectiveDate: String(item?.effectiveDate || "").slice(0, 10), revenue: normalizeMoneyValue(item?.revenue), cost: normalizeMoneyValue(item?.cost) }))
     .filter((item) => getFinanceDateParts(item.effectiveDate))
     .sort((left, right) => left.effectiveDate.localeCompare(right.effectiveDate));
-  const defaultRate = { effectiveDate: getPlacementFinanceStartDate(placement, engagementType) || todayISO(), revenue: fallbackRevenue, cost: fallbackCost };
+  const defaultRate = { effectiveDate: getPlacementFinanceStartDate(placement, engagementType) || getFinanceTodayISO(), revenue: fallbackRevenue, cost: fallbackCost };
   return history.filter((item) => item.effectiveDate <= effectiveDate).at(-1) || history[0] || defaultRate;
 }
 
-function getFinanceContractStatus(placement, engagementType, asOf = todayISO()) {
+function getFinanceContractStatus(placement, engagementType, asOf = getFinanceTodayISO()) {
   if (engagementType !== "Contractual") return "FTE";
   const startDate = getPlacementFinanceStartDate(placement, engagementType);
   const endDate = getPlacementFinanceEndDate(placement);
@@ -8861,7 +8990,7 @@ function getFinanceContractStatus(placement, engagementType, asOf = todayISO()) 
 }
 
 function buildFinanceLedger() {
-  const now = todayISO();
+  const now = getFinanceTodayISO();
   return state.placements.filter(isPlacementLinkedToActiveCandidate).flatMap((placement) => {
     const candidate = findById(state.candidates, placement.candidateId);
     const job = findById(state.jobs, placement.jobId || candidate?.jobId);
@@ -8878,7 +9007,24 @@ function buildFinanceLedger() {
       return getFinanceMonthsBetween(shared.startDate, actualEnd).map((monthKey) => {
         const rate = getPlacementFinanceRate(placement, engagementType, `${monthKey}-01`);
         const period = getFinancePeriod(`${monthKey}-01`);
-        return { ...shared, recognitionDate: `${monthKey}-01`, revenue: rate.revenue, cost: rate.cost, margin: rate.revenue - rate.cost, ...period };
+        const workdays = getContractWorkdayContext(placement, monthKey, now);
+        const dailyRevenue = workdays.standardWorkingDays ? rate.revenue / workdays.standardWorkingDays : 0;
+        const dailyCost = workdays.standardWorkingDays ? rate.cost / workdays.standardWorkingDays : 0;
+        const revenue = Math.round(dailyRevenue * workdays.actualWorkedDays);
+        const cost = Math.round(dailyCost * workdays.actualWorkedDays);
+        return {
+          ...shared,
+          recognitionDate: `${monthKey}-01`,
+          revenue,
+          cost,
+          margin: revenue - cost,
+          monthlyRevenue: rate.revenue,
+          monthlyCost: rate.cost,
+          dailyRevenue,
+          dailyCost,
+          ...workdays,
+          ...period
+        };
       }).filter((entry) => entry.financialYearLabel);
     }
     if (!shared.startDate || shared.startDate > now) return [];
@@ -8890,7 +9036,7 @@ function buildFinanceLedger() {
 }
 
 function getFinanceContext(options = {}) {
-  const asOf = options.asOf || todayISO();
+  const asOf = options.asOf || getFinanceTodayISO();
   const selectedPeriod = options.period || ui.revenue.period;
   const ignoreFilters = Boolean(options.ignoreFilters);
   const ledger = buildFinanceLedger();
@@ -9099,6 +9245,31 @@ function renderFinancePeriodComparison() {
   `;
 }
 
+function renderContractWorkdaysPanel(finance) {
+  const rows = finance.entries
+    .filter((entry) => entry.engagementType === "Contractual")
+    .sort((left, right) => right.monthKey.localeCompare(left.monthKey) || left.candidateName.localeCompare(right.candidateName));
+
+  return `
+    <section class="panel finance-workdays-panel">
+      <div class="section-heading-row">
+        <div>
+          <h2 class="panel-title">C2C actual workdays</h2>
+          <p class="panel-subtitle">Monday–Friday are standard working days. Enter actual worked days for the selected month; this single number already excludes client/public holidays, unpaid leave, and non-billable absence. No holiday calendar is maintained.</p>
+        </div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Client</th><th>Period</th><th>Eligible Weekdays</th><th>Actual Worked Days</th><th>Revenue / Cost</th><th>Status</th><th>Action</th></tr></thead><tbody>
+        ${rows.length ? rows.map((entry) => {
+          const editable = canCurrentUserManageTaName(entry.recruiter);
+          const draft = getFinanceWorkdayDraftValue(entry.candidateId, entry.monthKey, String(entry.actualWorkedDays));
+          const status = entry.isManual ? "Final · saved" : "Provisional · default weekdays";
+          return `<tr><td><strong>${escapeHtml(entry.candidateName)}</strong><br /><span class="muted-cell">${escapeHtml(entry.recruiter)}</span></td><td>${escapeHtml(entry.clientName)}</td><td>${escapeHtml(entry.monthLabel)}</td><td>${entry.eligibleWorkingDays} of ${entry.standardWorkingDays}</td><td><input class="tracker-input" type="number" min="0" max="${entry.eligibleWorkingDays}" step="1" data-finance-workdays data-candidate-id="${escapeHtml(entry.candidateId)}" data-month-key="${escapeHtml(entry.monthKey)}" value="${escapeHtml(String(draft))}" ${editable ? "" : "disabled"} /></td><td>${formatCurrency(entry.revenue)}<br /><span class="muted-cell">Cost ${formatCurrency(entry.cost)}</span></td><td><span class="muted-cell">${status}</span></td><td><button class="tool-btn" type="button" data-action="save-contract-workdays" data-candidate-id="${escapeHtml(entry.candidateId)}" data-month-key="${escapeHtml(entry.monthKey)}" ${editable ? "" : "disabled"}>Save days</button></td></tr>`;
+        }).join("") : '<tr><td colspan="8" class="empty">No contractual revenue matches the selected period. Choose a month, quarter, or financial year to record C2C workdays.</td></tr>'}
+      </tbody></table></div>
+    </section>
+  `;
+}
+
 function renderRevenueSection() {
   if (!canCurrentUserAccessExecutiveFinance()) {
     return `<section class="panel"><h2 class="panel-title">Executive finance access required</h2><p class="panel-subtitle">Business growth, revenue, margin, and project performance are available only to the CEO and Managing Director.</p></section>`;
@@ -9110,16 +9281,18 @@ function renderRevenueSection() {
     ${renderFinanceFilters(finance)}
 
     <section class="panel finance-metrics-panel">
-      <div class="section-heading-row"><div><h2 class="panel-title">Operating now</h2><p class="panel-subtitle">Current calendar month only, as of ${escapeHtml(operatingFinance.asOf)}. Closed contracts and previous-month revenue are excluded.</p></div></div>
+      <div class="section-heading-row"><div><h2 class="panel-title">Operating now</h2><p class="panel-subtitle">Month-to-date recognised figures as of ${escapeHtml(operatingFinance.asOf)}. C2C amounts remain provisional until actual worked days are saved; closed contracts and prior-month revenue are excluded.</p></div></div>
       <div class="metrics-grid">
-        ${metricCard("Current Month Revenue", formatCurrency(operatingFinance.total.revenue))}
-        ${metricCard("Current Month Cost", formatCurrency(operatingFinance.total.cost))}
-        ${metricCard("Current Month Margin", formatCurrency(operatingFinance.total.margin))}
+        ${metricCard("MTD Recognised Revenue", formatCurrency(operatingFinance.total.revenue))}
+        ${metricCard("MTD Delivery Cost", formatCurrency(operatingFinance.total.cost))}
+        ${metricCard("MTD Gross Margin", formatCurrency(operatingFinance.total.margin))}
         ${metricCard("Active C2C MRR", formatCurrency(operatingFinance.activeMrr))}
         ${metricCard("Active Deployed Candidates", operatingFinance.activeDeployedCandidates.length)}
         ${metricCard("Active C2C Contracts", operatingFinance.activeContracts.length)}
       </div>
     </section>
+
+    ${renderContractWorkdaysPanel(finance)}
 
     ${renderFinancePeriodComparison()}
 
@@ -13652,7 +13825,8 @@ async function refreshSharedStateFromBackendIfIdle() {
     ui.backendSyncInFlight ||
     ui.backendSyncTimerId ||
     hasFinanceEditDrafts() ||
-    document.activeElement?.matches("[data-finance-field]")
+    hasFinanceWorkdayDrafts() ||
+    document.activeElement?.matches("[data-finance-field], [data-finance-workdays]")
   ) {
     return false;
   }
