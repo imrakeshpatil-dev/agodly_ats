@@ -8898,6 +8898,35 @@ function getContractWorkdayContext(placement, monthKey, asOf = getFinanceTodayIS
   return { standardWorkingDays, eligibleWorkingDays, actualWorkedDays, isFinal, isManual: savedWorkedDays !== null };
 }
 
+function getContractMonthlyRunRate(placement, monthKey, asOf = getFinanceTodayISO()) {
+  const bounds = getFinanceMonthBounds(monthKey);
+  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const closureDate = getPlacementFinanceEndDate(placement);
+  if (!bounds || !startDate || startDate > bounds.endDate) {
+    return { eligibleWorkingDays: 0, elapsedEligibleWorkingDays: 0, actualWorkedDays: 0, billableDayPace: 0, projectedWorkedDays: 0, isComplete: false };
+  }
+
+  const contractMonthStart = startDate > bounds.startDate ? startDate : bounds.startDate;
+  const contractMonthEnd = closureDate && closureDate < bounds.endDate ? closureDate : bounds.endDate;
+  if (contractMonthEnd < contractMonthStart) {
+    return { eligibleWorkingDays: 0, elapsedEligibleWorkingDays: 0, actualWorkedDays: 0, billableDayPace: 0, projectedWorkedDays: 0, isComplete: true };
+  }
+
+  const elapsedEnd = asOf < contractMonthEnd ? asOf : contractMonthEnd;
+  const eligibleWorkingDays = countFinanceWeekdays(contractMonthStart, contractMonthEnd);
+  const elapsedEligibleWorkingDays = countFinanceWeekdays(contractMonthStart, elapsedEnd);
+  const recorded = getContractWorkdayContext(placement, monthKey, asOf);
+  const actualWorkedDays = Math.min(recorded.actualWorkedDays, elapsedEligibleWorkingDays);
+  const billableDayPace = elapsedEligibleWorkingDays ? actualWorkedDays / elapsedEligibleWorkingDays : 0;
+  const isComplete = elapsedEnd >= contractMonthEnd;
+  const projectedWorkedDays = !elapsedEligibleWorkingDays
+    ? 0
+    : isComplete
+    ? actualWorkedDays
+    : Math.min(eligibleWorkingDays, actualWorkedDays * (eligibleWorkingDays / elapsedEligibleWorkingDays));
+  return { eligibleWorkingDays, elapsedEligibleWorkingDays, actualWorkedDays, billableDayPace, projectedWorkedDays, isComplete };
+}
+
 function getFinancePeriod(value) {
   const date = getFinanceDateParts(value);
   if (!date) return null;
@@ -9035,6 +9064,46 @@ function buildFinanceLedger() {
   });
 }
 
+function getMonthlyRunRateForecast(ledger, placementIds, asOf = getFinanceTodayISO()) {
+  const monthKey = getFinanceCurrentMonthKey(asOf);
+  const currentEntries = ledger.filter((entry) => placementIds.has(entry.placementId) && entry.monthKey === monthKey);
+  const c2cEntries = currentEntries.filter((entry) => entry.engagementType === "Contractual");
+  const fteEntries = currentEntries.filter((entry) => entry.engagementType === "FTE");
+  const c2c = c2cEntries.map((entry) => {
+    const rate = getPlacementFinanceRate(entry.placement, entry.engagementType, `${monthKey}-01`);
+    const runRate = getContractMonthlyRunRate(entry.placement, monthKey, asOf);
+    const dailyRevenue = entry.standardWorkingDays ? rate.revenue / entry.standardWorkingDays : 0;
+    const dailyCost = entry.standardWorkingDays ? rate.cost / entry.standardWorkingDays : 0;
+    const revenue = Math.round(dailyRevenue * runRate.projectedWorkedDays);
+    const cost = Math.round(dailyCost * runRate.projectedWorkedDays);
+    return { ...entry, ...runRate, projectedRevenue: revenue, projectedCost: cost, projectedMargin: revenue - cost };
+  });
+  const sum = (rows, key) => rows.reduce((total, row) => total + (Number(row[key]) || 0), 0);
+  const recognisedRevenue = sum(currentEntries, "revenue");
+  const recognisedCost = sum(currentEntries, "cost");
+  const fteRevenue = sum(fteEntries, "revenue");
+  const fteCost = sum(fteEntries, "cost");
+  const projectedRevenue = fteRevenue + sum(c2c, "projectedRevenue");
+  const projectedCost = fteCost + sum(c2c, "projectedCost");
+  const elapsedEligibleWorkingDays = sum(c2c, "elapsedEligibleWorkingDays");
+  const actualWorkedDays = sum(c2c, "actualWorkedDays");
+  return {
+    monthKey,
+    monthLabel: getFinanceMonthLabel(monthKey),
+    revenue: projectedRevenue,
+    cost: projectedCost,
+    margin: projectedRevenue - projectedCost,
+    remainingRevenue: projectedRevenue - recognisedRevenue,
+    remainingCost: projectedCost - recognisedCost,
+    remainingMargin: (projectedRevenue - projectedCost) - (recognisedRevenue - recognisedCost),
+    billableDayPace: elapsedEligibleWorkingDays ? (actualWorkedDays / elapsedEligibleWorkingDays) * 100 : 0,
+    hasPace: elapsedEligibleWorkingDays > 0,
+    projectedContracts: c2c.filter((entry) => !entry.isComplete).length,
+    recognisedRevenue,
+    recognisedCost
+  };
+}
+
 function getFinanceContext(options = {}) {
   const asOf = options.asOf || getFinanceTodayISO();
   const selectedPeriod = options.period || ui.revenue.period;
@@ -9076,6 +9145,7 @@ function getFinanceContext(options = {}) {
   const activeContracts = scopedRows.filter((row) => row.engagementType === "Contractual" && row.contractStatus === "Active");
   const activeDeployedCandidates = scopedRows.filter((row) => row.contractStatus === "Active" || (row.engagementType === "FTE" && row.startDate && row.startDate <= asOf));
   const activeMrr = activeContracts.reduce((sum, row) => sum + getPlacementFinanceRate(row.placement, row.engagementType, asOf).revenue, 0);
+  const runRate = getMonthlyRunRateForecast(ledger, placementIds, asOf);
   const qualityIssues = state.placements.filter(isPlacementLinkedToActiveCandidate).flatMap((placement) => {
     const candidate = findById(state.candidates, placement.candidateId);
     const job = findById(state.jobs, placement.jobId || candidate?.jobId);
@@ -9098,7 +9168,7 @@ function getFinanceContext(options = {}) {
   const latestParts = String(latest?.key || "").split(":");
   const sameQuarterLastYear = latestParts.length === 3 ? quarters.find((row) => row.key === `fq:${Number(latestParts[1]) - 1}:${latestParts[2]}`) : null;
   return {
-    ledger, entries, total, months, quarters, clients, tas, placements, activeContracts, activeDeployedCandidates, activeMrr, qualityIssues,
+    ledger, entries, total, months, quarters, clients, tas, placements, activeContracts, activeDeployedCandidates, activeMrr, runRate, qualityIssues,
     periodOptions, latest, selectedPeriod, selectedPeriodLabel: getFinancePeriodLabel(selectedPeriod, asOf), asOf,
     qoqRevenue: calculateGrowth(latest?.revenue, quarters.at(-2)?.revenue), yoyRevenue: calculateGrowth(latest?.revenue, sameQuarterLastYear?.revenue)
   };
@@ -9245,6 +9315,24 @@ function renderFinancePeriodComparison() {
   `;
 }
 
+function renderMonthlyRunRateProjection(finance) {
+  const forecast = finance.runRate;
+  const pace = forecast.hasPace ? `${formatPercent(forecast.billableDayPace)} billable-day pace` : "No eligible workday completed yet";
+  return `
+    <section class="panel finance-metrics-panel finance-run-rate-panel">
+      <div class="section-heading-row"><div><p class="panel-kicker">Month-end forecast</p><h2 class="panel-title">Projected Monthly Revenue & Margin</h2><p class="panel-subtitle">${escapeHtml(forecast.monthLabel)} forecast as of ${escapeHtml(finance.asOf)}. Each active C2C project is projected from actual worked days ÷ eligible weekdays elapsed, applied to its remaining eligible weekdays. FTE and closed-contract amounts stay actual.</p></div></div>
+      <div class="metrics-grid">
+        ${metricCard("Projected Monthly Revenue", formatCurrency(forecast.revenue))}
+        ${metricCard("Projected Monthly Margin", formatCurrency(forecast.margin))}
+        ${metricCard("Revenue Remaining at Run Rate", formatCurrency(forecast.remainingRevenue))}
+        ${metricCard("Margin Remaining at Run Rate", formatCurrency(forecast.remainingMargin))}
+        ${metricCard("C2C Billable-Day Pace", pace)}
+        ${metricCard("Contracts Still Forecast", forecast.projectedContracts)}
+      </div>
+    </section>
+  `;
+}
+
 function renderContractWorkdaysPanel(finance) {
   const rows = finance.entries
     .filter((entry) => entry.engagementType === "Contractual")
@@ -9291,6 +9379,8 @@ function renderRevenueSection() {
         ${metricCard("Active C2C Contracts", operatingFinance.activeContracts.length)}
       </div>
     </section>
+
+    ${renderMonthlyRunRateProjection(operatingFinance)}
 
     ${renderContractWorkdaysPanel(finance)}
 

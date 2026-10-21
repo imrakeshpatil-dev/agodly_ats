@@ -155,6 +155,18 @@ test("contractual finance prorates monthly rates by actual worked weekdays witho
   assert.match(authorization, /actualWorkedDaysByMonth/);
 });
 
+test("executive finance projects the current C2C month from the recorded billable-day run rate", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /function getContractMonthlyRunRate/);
+  assert.match(browser, /function getMonthlyRunRateForecast/);
+  assert.match(browser, /actualWorkedDays \* \(eligibleWorkingDays \/ elapsedEligibleWorkingDays\)/);
+  assert.match(browser, /Projected Monthly Revenue & Margin/);
+  assert.match(browser, /Projected Monthly Revenue/);
+  assert.match(browser, /Projected Monthly Margin/);
+  assert.match(browser, /FTE and closed-contract amounts stay actual/);
+});
+
 test("revenue charts present the most recent month and quarter first", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
