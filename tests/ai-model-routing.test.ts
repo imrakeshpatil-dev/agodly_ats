@@ -19,13 +19,14 @@ test("recruiter prompts route routine work to standard and difficult analysis to
 });
 
 test("AI call sites use the requested workload-specific providers", async () => {
-  const [env, config, resume, tools, agent, render] = await Promise.all([
+  const [env, config, resume, tools, agent, render, resumeProcessing] = await Promise.all([
     read("lib/server/config/env.ts"),
     read("lib/server/services/ai/aiConfig.ts"),
     read("lib/server/services/resumeAIParser.ts"),
     read("lib/server/services/aiTools.ts"),
     read("lib/server/services/aiAgentService.ts"),
-    read("render.yaml")
+    read("render.yaml"),
+    read("lib/server/services/resumeProcessingService.ts")
   ]);
 
   assert.match(env, /OPENAI_BULK_MODEL/);
@@ -35,7 +36,8 @@ test("AI call sites use the requested workload-specific providers", async () => 
   assert.match(config, /workload === "bulk"/);
   assert.match(config, /workload === "complex"/);
   assert.match(resume, /getAIProvider\("bulk"\)/);
-  assert.match(tools, /getAIProvider\("standard"\)/);
+  assert.match(tools, /getAIProvider\("complex"\)/);
+  assert.match(resumeProcessing, /getAIProvider\("complex"\)/);
   assert.match(agent, /getAIProvider\(selectAIWorkloadTier\(cleanPrompt\)\)/);
   assert.match(render, /OPENAI_BULK_MODEL[\s\S]*gpt-5\.6-luna/);
   assert.match(render, /OPENAI_STANDARD_MODEL[\s\S]*gpt-5\.4-mini/);

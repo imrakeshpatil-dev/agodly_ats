@@ -9,6 +9,7 @@ import {
 } from "../utils/bulk-upload-attribution";
 import { candidateStoreService } from "./candidate-store.service";
 import { classifyResumeAIError, parseResumeWithAIResult } from "./resumeAIParser";
+import { getAIProvider } from "./ai/aiProviderFactory";
 import { extractTextFromDOCX, extractTextFromPDF } from "./resumeTextExtractor";
 import { uniqueStrings } from "../utils/text";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
@@ -110,7 +111,7 @@ class ResumeProcessingService {
         throw new Error("Resume text extraction returned empty content");
       }
 
-      const aiResult = await parseResumeWithAIResult(resumeText);
+      const aiResult = await parseResumeWithAIResult(resumeText, getAIProvider("complex"));
       const extracted = aiResult.data;
       const normalized = normalizeResumeExtraction(extracted, resumeText);
       const keywords = uniqueStrings(normalized.keywords);

@@ -23,6 +23,7 @@ import {
   ResumeAIParseResult
 } from "../services/resumeAIParser";
 import { extractTextFromDOCX, extractTextFromPDF } from "../services/resumeTextExtractor";
+import { getAIProvider } from "../services/ai/aiProviderFactory";
 import { CandidateInput, CandidateProfileUpdate, CandidateRecord } from "../types/candidate";
 import { normalizeResumeExtraction } from "../utils/resume-normalizer";
 import { resolveRuntimeDataPath } from "../utils/runtime-data";
@@ -526,7 +527,7 @@ export const reparseCandidateWithAI = async (req: Request, res: Response): Promi
     );
   }
 
-  const result = await parseResumeWithAIResult(resumeText);
+  const result = await parseResumeWithAIResult(resumeText, getAIProvider("complex"));
   const patch = buildPatchFromAiResult(result, candidate, resumeText);
   const updated = await candidateStoreService.updateCandidateProfile(candidateId, patch);
 
@@ -571,7 +572,7 @@ export const reparseCandidatesBatchWithAI = async (req: Request, res: Response):
         continue;
       }
 
-      const result = await parseResumeWithAIResult(resumeText);
+      const result = await parseResumeWithAIResult(resumeText, getAIProvider("complex"));
       const patch = buildPatchFromAiResult(result, candidate, resumeText);
       const updated = await candidateStoreService.updateCandidateProfile(candidate.id, patch);
       successCount += 1;
@@ -798,6 +799,17 @@ const buildPatchFromAiResult = (
   const parsed = result.data;
   const normalized = normalizeResumeExtraction(parsed, resumeText);
   return {
+    name: normalized.fullName || existing.name,
+    email: normalized.email || existing.email,
+    phone: normalized.phone || existing.phone,
+    location: normalized.location || existing.location,
+    currentRole: normalized.currentRole || existing.currentRole,
+    currentCompany: normalized.currentCompany || existing.currentCompany,
+    skills: normalized.skills.length ? normalized.skills : existing.skills,
+    experienceYears: normalized.totalExperienceYears ?? existing.experienceYears,
+    education: normalized.education.length ? normalized.education.join(" | ") : existing.education,
+    profileSummary: normalized.profileSummary || existing.profileSummary,
+    keywords: normalized.keywords.length ? normalized.keywords : existing.keywords,
     parsingStatus: "COMPLETED",
     parsedData: {
       ...(existing.parsedData || {}),

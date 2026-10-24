@@ -4631,7 +4631,7 @@ function renderJobAiShortlistPanel() {
         <div>
           <p class="jobs-eyebrow">AI-assisted shortlist</p>
           <h2 class="panel-title">Best-fit candidates for ${escapeHtml(job.title)}</h2>
-          <p class="panel-subtitle">Ranked against this job’s description and required skills. Review the evidence before advancing anyone.</p>
+          <p class="panel-subtitle">Ranked against the JD with CV-grounded evidence. Location and availability are visible for review but are not scored.</p>
         </div>
         <button class="tool-btn" type="button" data-action="run-job-ai-shortlist" data-job-id="${escapeHtml(job.id)}" ${ui.jobs.aiShortlistLoading ? "disabled" : ""}>${ui.jobs.aiShortlistLoading ? "Ranking…" : "Refresh shortlist"}</button>
       </div>
@@ -4656,6 +4656,8 @@ function renderJobShortlistCandidate(result, job) {
   const experience = getShortlistExperienceFit(result, candidate);
   const locationFit = String(result.locationFit || getShortlistLocationFit(candidate, job));
   const availability = String(result.availability || getShortlistAvailability(candidate));
+  const evidenceSource = String(result.evidenceSource || "Profile only");
+  const cvEvidenceQuotes = uniqueStringsLocal(result.cvEvidenceQuotes || []).slice(0, 5);
   const breakdown = getShortlistScoreBreakdown(result.scoreBreakdown);
   const history = getJobShortlistDecisionHistory(candidate, job.id);
   const lastDecision = history[0];
@@ -4674,10 +4676,11 @@ function renderJobShortlistCandidate(result, job) {
       <div class="job-shortlist-evidence-grid">
         ${renderShortlistEvidenceBlock("Must-have skills", matchedMustHaves, "matched", "Matched")}
         ${renderShortlistEvidenceBlock("Missing must-haves", missingMustHaves, "missing", "None missing")}
+        ${renderShortlistEvidenceBlock(`CV evidence · ${evidenceSource}`, cvEvidenceQuotes, "matched", evidenceSource === "Profile only" ? "No readable CV evidence — verify CV" : "No specific CV excerpt returned")}
         <div class="job-shortlist-evidence"><strong>Experience fit</strong><span>${escapeHtml(experience)}</span></div>
-        <div class="job-shortlist-evidence"><strong>Location fit</strong><span>${escapeHtml(locationFit)}</span></div>
-        <div class="job-shortlist-evidence"><strong>Availability</strong><span>${escapeHtml(availability)}</span></div>
-        <div class="job-shortlist-evidence"><strong>Score rationale</strong><span>${escapeHtml(`Terms ${breakdown.terms}/65 · Skills ${breakdown.skills}/25 · Experience ${breakdown.experience}/10`)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Location · not scored</strong><span>${escapeHtml(locationFit)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Availability · not scored</strong><span>${escapeHtml(availability)}</span></div>
+        <div class="job-shortlist-evidence"><strong>Score rationale</strong><span>${escapeHtml(`Must-have ${breakdown.mandatorySkills}/45 · CV projects ${breakdown.projectEvidence}/30 · Experience ${breakdown.relevantExperienceAndRecency}/20 · CV quality ${breakdown.cvCompleteness}/5`)}</span></div>
       </div>
 
       ${result.confidenceExplanation ? `<p class="confidence-note">${escapeHtml(result.confidenceExplanation)}</p>` : ""}
@@ -4738,9 +4741,10 @@ function getShortlistAvailability(candidate) {
 function getShortlistScoreBreakdown(scoreBreakdown) {
   const points = scoreBreakdown?.weightedPoints && typeof scoreBreakdown.weightedPoints === "object" ? scoreBreakdown.weightedPoints : {};
   return {
-    terms: roundTo(points.terms, 1),
-    skills: roundTo(points.skills, 1),
-    experience: roundTo(points.experience, 1)
+    mandatorySkills: roundTo(points.mandatorySkills, 1),
+    projectEvidence: roundTo(points.projectEvidence, 1),
+    relevantExperienceAndRecency: roundTo(points.relevantExperienceAndRecency, 1),
+    cvCompleteness: roundTo(points.cvCompleteness, 1)
   };
 }
 

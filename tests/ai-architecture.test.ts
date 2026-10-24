@@ -15,6 +15,10 @@ test("AI shortlisting uses the configured provider abstraction", async () => {
   assert.match(agent, /AI assistant is temporarily unavailable\. Core ATS functions continue to work normally\./);
   assert.match(tools, /rerankWithConfiguredProviderForJobMatch/);
   assert.match(tools, /heuristicRanked/);
+  assert.match(tools, /getCandidateResumeTextForMatching/);
+  assert.match(tools, /const candidatePool = await getFallbackCandidates\(authContext\)/);
+  assert.match(tools, /CV verified/);
+  assert.match(tools, /cvEvidenceQuotes/);
   assert.doesNotMatch(agent, /new OpenAI|OPENAI_API_KEY/);
   assert.doesNotMatch(tools, /new OpenAI/);
   assert.match(agent, /isCandidateCountIntent/);
@@ -61,10 +65,22 @@ test("job shortlists expose evidence and persist recruiter decisions", async () 
   assert.match(controller, /jobLocation/);
   assert.match(controller, /workMode/);
   assert.match(browser, /Must-have skills/);
+  assert.match(browser, /CV evidence/);
+  assert.match(browser, /Location · not scored/);
+  assert.match(browser, /Must-have \$\{breakdown\.mandatorySkills\}\/45/);
   assert.match(browser, /Score rationale/);
   assert.match(browser, /Recruiter decision/);
   assert.match(browser, /shortlistDecisions/);
   assert.match(browser, /record-job-shortlist-decision/);
+});
+
+test("an explicit AI re-parse refreshes the candidate fields used by matching", async () => {
+  const controller = await read("lib/server/controllers/candidate.controller.ts");
+
+  assert.match(controller, /currentRole: normalized\.currentRole \|\| existing\.currentRole/);
+  assert.match(controller, /skills: normalized\.skills\.length \? normalized\.skills : existing\.skills/);
+  assert.match(controller, /experienceYears: normalized\.totalExperienceYears \?\? existing\.experienceYears/);
+  assert.match(controller, /keywords: normalized\.keywords\.length \? normalized\.keywords : existing\.keywords/);
 });
 
 test("provider keys stay server-side and are absent from browser assets", async () => {
