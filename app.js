@@ -9102,6 +9102,133 @@ function getMonthlyRunRateForecast(ledger, placementIds, asOf = getFinanceTodayI
   };
 }
 
+function getFinanceMonthKeyOffset(monthKey, offset) {
+  const match = String(monthKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(Number(match[1]), Number(match[2]) - 1 + Number(offset || 0), 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getNextFinanceMonthKey(asOf = getFinanceTodayISO()) {
+  return getFinanceMonthKeyOffset(getFinanceCurrentMonthKey(asOf), 1);
+}
+
+function getFinanceYearEndDate(asOf = getFinanceTodayISO()) {
+  const period = getFinancePeriod(asOf);
+  return period ? `${period.financialYearStart + 1}-03-31` : "";
+}
+
+function getFinanceQuarterMonthKeys(quarterKey) {
+  const [, financialYear, quarter] = String(quarterKey || "").split(":");
+  const startYear = Number(financialYear);
+  const quarterNumber = Number(quarter);
+  if (!Number.isInteger(startYear) || ![1, 2, 3, 4].includes(quarterNumber)) return [];
+  const startMonth = [4, 7, 10, 1][quarterNumber - 1];
+  const year = quarterNumber === 4 ? startYear + 1 : startYear;
+  const firstMonth = `${year}-${String(startMonth).padStart(2, "0")}`;
+  return [0, 1, 2].map((offset) => getFinanceMonthKeyOffset(firstMonth, offset));
+}
+
+function getNextFinanceQuarterKey(asOf = getFinanceTodayISO()) {
+  const current = getFinancePeriod(asOf);
+  if (!current) return "";
+  const financialYear = current.quarter === 4 ? current.financialYearStart + 1 : current.financialYearStart;
+  const quarter = current.quarter === 4 ? 1 : current.quarter + 1;
+  return `fq:${financialYear}:${quarter}`;
+}
+
+function getContractForecastBillablePace(placement, asOf = getFinanceTodayISO()) {
+  const runRate = getContractMonthlyRunRate(placement, getFinanceCurrentMonthKey(asOf), asOf);
+  if (!runRate.elapsedEligibleWorkingDays) return 1;
+  return Math.max(0, Math.min(1, runRate.billableDayPace));
+}
+
+function getC2CFutureMonthForecast(placement, monthKey, asOf = getFinanceTodayISO()) {
+  const bounds = getFinanceMonthBounds(monthKey);
+  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const endDate = getPlacementFinanceEndDate(placement);
+  if (!bounds || !startDate || startDate > bounds.endDate || (endDate && endDate < bounds.startDate)) {
+    return { placementId: String(placement?.id || ""), monthKey, revenue: 0, cost: 0, margin: 0, eligibleWorkingDays: 0, billableDayPace: 0 };
+  }
+
+  const windowStart = startDate > bounds.startDate ? startDate : bounds.startDate;
+  const windowEnd = endDate && endDate < bounds.endDate ? endDate : bounds.endDate;
+  const eligibleWorkingDays = countFinanceWeekdays(windowStart, windowEnd);
+  const standardWorkingDays = countFinanceWeekdays(bounds.startDate, bounds.endDate);
+  const rate = getPlacementFinanceRate(placement, "Contractual", `${monthKey}-01`);
+  const billableDayPace = getContractForecastBillablePace(placement, asOf);
+  const revenue = standardWorkingDays ? Math.round((rate.revenue / standardWorkingDays) * eligibleWorkingDays * billableDayPace) : 0;
+  const cost = standardWorkingDays ? Math.round((rate.cost / standardWorkingDays) * eligibleWorkingDays * billableDayPace) : 0;
+  return { placementId: String(placement?.id || ""), monthKey, revenue, cost, margin: revenue - cost, eligibleWorkingDays, billableDayPace };
+}
+
+function getC2CFutureForecastTotals(contracts, monthKeys, asOf = getFinanceTodayISO()) {
+  const entries = (contracts || []).flatMap((contract) => monthKeys.map((monthKey) => getC2CFutureMonthForecast(contract.placement, monthKey, asOf)));
+  const total = entries.reduce((sum, entry) => ({ revenue: sum.revenue + entry.revenue, cost: sum.cost + entry.cost, margin: sum.margin + entry.margin }), { revenue: 0, cost: 0, margin: 0 });
+  return { entries, ...total };
+}
+
+function getFinanceForecast(finance, asOf = getFinanceTodayISO()) {
+  const currentMonthKey = getFinanceCurrentMonthKey(asOf);
+  const nextMonthKey = getNextFinanceMonthKey(asOf);
+  const fyEndDate = getFinanceYearEndDate(asOf);
+  const fyEndMonthKey = getFinanceMonthKey(fyEndDate);
+  const expectedMonthKeys = getFinanceMonthsBetween(currentMonthKey, fyEndMonthKey);
+  const futureMonthKeys = expectedMonthKeys.filter((monthKey) => monthKey > currentMonthKey);
+  const future = getC2CFutureForecastTotals(finance.activeContracts, futureMonthKeys, asOf);
+  const nextMonth = getC2CFutureForecastTotals(finance.activeContracts, [nextMonthKey], asOf);
+  const nextQuarterKey = getNextFinanceQuarterKey(asOf);
+  const nextQuarterMonths = getFinanceQuarterMonthKeys(nextQuarterKey);
+  const nextQuarter = getC2CFutureForecastTotals(finance.activeContracts, nextQuarterMonths, asOf);
+  const placementIds = new Set(finance.placements.map((row) => row.placementId));
+  const currentPeriod = getFinancePeriod(asOf);
+  const fyActual = finance.ledger
+    .filter((entry) => placementIds.has(entry.placementId) && entry.financialYearStart === currentPeriod?.financialYearStart && entry.recognitionDate <= asOf)
+    .reduce((sum, entry) => ({ revenue: sum.revenue + entry.revenue, cost: sum.cost + entry.cost, margin: sum.margin + entry.margin }), { revenue: 0, cost: 0, margin: 0 });
+  const remaining = {
+    revenue: finance.runRate.remainingRevenue + future.revenue,
+    cost: finance.runRate.remainingCost + future.cost,
+    margin: finance.runRate.remainingMargin + future.margin
+  };
+  const quarterRows = [...new Set(expectedMonthKeys.map((monthKey) => getFinancePeriod(`${monthKey}-01`)?.quarterKey).filter(Boolean))].map((quarterKey) => {
+    const months = expectedMonthKeys.filter((monthKey) => getFinancePeriod(`${monthKey}-01`)?.quarterKey === quarterKey);
+    const pastActual = finance.ledger
+      .filter((entry) => placementIds.has(entry.placementId) && entry.quarterKey === quarterKey && entry.monthKey < currentMonthKey)
+      .reduce((sum, entry) => ({ revenue: sum.revenue + entry.revenue, cost: sum.cost + entry.cost, margin: sum.margin + entry.margin }), { revenue: 0, cost: 0, margin: 0 });
+    const currentMonth = months.includes(currentMonthKey)
+      ? { revenue: finance.runRate.revenue, cost: finance.runRate.cost, margin: finance.runRate.margin }
+      : { revenue: 0, cost: 0, margin: 0 };
+    const futureQuarter = getC2CFutureForecastTotals(finance.activeContracts, months.filter((monthKey) => monthKey > currentMonthKey), asOf);
+    const revenue = pastActual.revenue + currentMonth.revenue + futureQuarter.revenue;
+    const cost = pastActual.cost + currentMonth.cost + futureQuarter.cost;
+    const period = getFinancePeriod(`${months[0]}-01`);
+    return {
+      key: quarterKey,
+      label: period?.quarterLabel || "Financial quarter",
+      actualRevenue: pastActual.revenue,
+      runRateRevenue: currentMonth.revenue + futureQuarter.revenue,
+      revenue,
+      cost,
+      margin: revenue - cost,
+      activeContracts: new Set(futureQuarter.entries.filter((entry) => entry.revenue || entry.cost).map((entry) => entry.placementId)).size
+    };
+  });
+  const openEndedContracts = finance.activeContracts.filter((entry) => !entry.endDate).length;
+  const contractsEndingInFy = finance.activeContracts.filter((entry) => entry.endDate && entry.endDate >= asOf && entry.endDate <= fyEndDate).length;
+  return {
+    nextMonth: { ...nextMonth, monthKey: nextMonthKey, monthLabel: getFinanceMonthLabel(nextMonthKey) },
+    nextQuarter: { ...nextQuarter, key: nextQuarterKey, label: getFinancePeriod(`${nextQuarterMonths[0]}-01`)?.quarterLabel || "Next financial quarter" },
+    fyEndDate,
+    financialYearLabel: currentPeriod?.financialYearLabel || "Current financial year",
+    actual: fyActual,
+    remaining,
+    expected: { revenue: fyActual.revenue + remaining.revenue, cost: fyActual.cost + remaining.cost, margin: fyActual.margin + remaining.margin },
+    quarterRows,
+    openEndedContracts,
+    contractsEndingInFy
+  };
+}
+
 function getFinanceContext(options = {}) {
   const asOf = options.asOf || getFinanceTodayISO();
   const selectedPeriod = options.period || ui.revenue.period;
@@ -9155,7 +9282,6 @@ function getFinanceContext(options = {}) {
     return [
       !placement.clientId && `${candidateName}: client`,
       engagementType === "Contractual" && !startDate && `${candidateName}: C2C start date`,
-      engagementType === "Contractual" && !endDate && `${candidateName}: C2C end date`,
       engagementType === "FTE" && !startDate && `${candidateName}: FTE recognition date`,
       !rate.revenue && `${candidateName}: revenue rate`
     ].filter(Boolean);
@@ -9331,6 +9457,25 @@ function renderMonthlyRunRateProjection(finance) {
   `;
 }
 
+function renderFinancialYearForecast(finance) {
+  const forecast = getFinanceForecast(finance);
+  return `
+    <section class="panel finance-metrics-panel finance-fy-forecast-panel">
+      <div class="section-heading-row"><div><p class="panel-kicker">Forward plan</p><h2 class="panel-title">Run-rate Forecast to ${escapeHtml(forecast.financialYearLabel)} End</h2><p class="panel-subtitle">Projected through ${escapeHtml(forecast.fyEndDate)} using each active C2C contract’s current billable-day pace. Contracts with an end date stop on that date; ${forecast.openEndedContracts} open-ended contract${forecast.openEndedContracts === 1 ? " is" : "s are"} assumed to continue through year end. FTE is one-time actual revenue only.</p></div></div>
+      <div class="metrics-grid">
+        ${metricCard(`${forecast.nextMonth.monthLabel} Forecast Revenue`, formatCurrency(forecast.nextMonth.revenue))}
+        ${metricCard(`${forecast.nextMonth.monthLabel} Forecast Margin`, formatCurrency(forecast.nextMonth.margin))}
+        ${metricCard(`${forecast.nextQuarter.label} Forecast Revenue`, formatCurrency(forecast.nextQuarter.revenue))}
+        ${metricCard(`${forecast.nextQuarter.label} Forecast Margin`, formatCurrency(forecast.nextQuarter.margin))}
+        ${metricCard(`${forecast.financialYearLabel} Expected Revenue`, formatCurrency(forecast.expected.revenue))}
+        ${metricCard(`${forecast.financialYearLabel} Expected Margin`, formatCurrency(forecast.expected.margin))}
+      </div>
+      <div class="forecast-summary-line"><span>FY actual to date: <strong>${formatCurrency(forecast.actual.revenue)}</strong> revenue · <strong>${formatCurrency(forecast.actual.margin)}</strong> margin</span><span>Remaining at run rate: <strong>${formatCurrency(forecast.remaining.revenue)}</strong> revenue · <strong>${formatCurrency(forecast.remaining.margin)}</strong> margin</span><span>${forecast.contractsEndingInFy} contract${forecast.contractsEndingInFy === 1 ? "" : "s"} end${forecast.contractsEndingInFy === 1 ? "s" : ""} before year end</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Financial quarter</th><th>Actual to date</th><th>Run-rate forecast</th><th>Expected revenue</th><th>Expected margin</th><th>C2C contracts forecast</th></tr></thead><tbody>${forecast.quarterRows.map((row) => `<tr><td><strong>${escapeHtml(row.label)}</strong></td><td>${formatCurrency(row.actualRevenue)}</td><td>${formatCurrency(row.runRateRevenue)}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.margin)}</td><td>${row.activeContracts}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">No remaining months in this financial year.</td></tr>'}</tbody></table></div>
+    </section>
+  `;
+}
+
 function renderContractWorkdaysPanel(finance) {
   const rows = finance.entries
     .filter((entry) => entry.engagementType === "Contractual")
@@ -9379,6 +9524,8 @@ function renderRevenueSection() {
     </section>
 
     ${renderMonthlyRunRateProjection(operatingFinance)}
+
+    ${renderFinancialYearForecast(finance)}
 
     ${renderOnboardedRevenueTracker()}
 

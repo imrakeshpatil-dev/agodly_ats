@@ -178,6 +178,20 @@ test("executive finance projects the current C2C month from the recorded billabl
   assert.match(browser, /FTE and closed-contract amounts stay actual/);
 });
 
+test("executive finance forecasts next periods and year-end from active C2C run rate", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /function getFinanceForecast\(finance, asOf = getFinanceTodayISO\(\)\)/);
+  assert.match(browser, /function getC2CFutureMonthForecast/);
+  assert.match(browser, /function getNextFinanceQuarterKey/);
+  assert.match(browser, /Run-rate Forecast to/);
+  assert.match(browser, /Forecast Revenue/);
+  assert.match(browser, /Expected Revenue/);
+  assert.match(browser, /Contracts with an end date stop on that date/);
+  assert.match(browser, /open-ended contract/);
+  assert.match(browser, /\$\{renderFinancialYearForecast\(finance\)\}/);
+});
+
 test("revenue charts present the most recent month and quarter first", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
