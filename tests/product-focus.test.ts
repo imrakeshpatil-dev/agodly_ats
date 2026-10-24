@@ -107,6 +107,7 @@ test("CEO and Managing Director can edit every onboarded finance row", async () 
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
   assert.match(browser, /const editable = canCurrentUserAccessExecutiveFinance\(\);/);
+  assert.match(browser, /\$\{renderOnboardedRevenueTracker\(\)\}/);
   assert.doesNotMatch(browser, /You can update only your own onboarded revenue/);
   assert.doesNotMatch(browser, /You can update only your own contractual workdays/);
   assert.match(browser, /Only the CEO and Managing Director can update revenue or margin/);

@@ -9380,6 +9380,8 @@ function renderRevenueSection() {
 
     ${renderMonthlyRunRateProjection(operatingFinance)}
 
+    ${renderOnboardedRevenueTracker()}
+
     ${renderContractWorkdaysPanel(finance)}
 
     ${renderFinancePeriodComparison()}
