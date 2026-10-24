@@ -103,6 +103,16 @@ test("executive finance shows QoQ and YoY business charts only to CEO and Managi
   assert.match(browser, /canViewFinance \? metricCard\("Total Revenue"/);
 });
 
+test("CEO and Managing Director can edit every onboarded finance row", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /const editable = canCurrentUserAccessExecutiveFinance\(\);/);
+  assert.doesNotMatch(browser, /You can update only your own onboarded revenue/);
+  assert.doesNotMatch(browser, /You can update only your own contractual workdays/);
+  assert.match(browser, /Only the CEO and Managing Director can update revenue or margin/);
+  assert.match(browser, /Only the CEO and Managing Director can update contractual workdays/);
+});
+
 test("finance ledger recognises recurring C2C revenue by month and one-time FTE revenue", async () => {
   const [browser, authorization] = await Promise.all([
     readFile(path.join(root, "app.js"), "utf8"),

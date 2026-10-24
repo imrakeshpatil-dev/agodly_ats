@@ -3902,7 +3902,10 @@ function renderOnboardedRevenueTracker() {
               rows.length
                 ? rows
                     .map((row) => {
-                      const editable = canCurrentUserManageTaName(row.recruiter);
+                      // This tracker is already restricted to CEO/MD. Do not apply
+                      // recruiter ownership here: executives need to correct finance
+                      // for every deployed candidate, including another TA's rows.
+                      const editable = canCurrentUserAccessExecutiveFinance();
                       const draftValue = (field, savedValue = "") => getFinanceEditDraftValue(row.candidateId, field, savedValue);
                       const clientId = draftValue("clientId", row.clientId);
                       const projectStartDate = draftValue("projectStartDate", row.projectStartDate || "");
@@ -7105,11 +7108,6 @@ function savePlacementFinanceRow(candidateId) {
   const candidate = findById(state.candidates, candidateId);
   if (!candidate) return;
 
-  if (!canCurrentUserManageTaName(candidate.recruiter)) {
-    alert("You can update only your own onboarded revenue. CEO and Managing Director can update all TA finance rows.");
-    return;
-  }
-
   const revenueInput = findFinanceInput("revenue", candidate.id);
   const costInput = findFinanceInput("cost", candidate.id);
   const startDateInput = findFinanceInput("projectStartDate", candidate.id);
@@ -7235,10 +7233,6 @@ function saveContractWorkdays(candidateId, monthKey) {
   const candidate = findById(state.candidates, candidateId);
   const placement = findPlacementForCandidate(candidateId);
   if (!candidate || !placement || !/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return;
-  if (!canCurrentUserManageTaName(candidate.recruiter)) {
-    alert("You can update only your own contractual workdays. CEO and Managing Director can update all TA finance rows.");
-    return;
-  }
   const job = findById(state.jobs, placement.jobId || candidate.jobId);
   if (getPlacementEngagementType(placement, job, candidate) !== "Contractual") return;
 
@@ -9352,7 +9346,7 @@ function renderContractWorkdaysPanel(finance) {
       </div>
       <div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Client</th><th>Period</th><th>Eligible Weekdays</th><th>Actual Worked Days</th><th>Revenue / Cost</th><th>Status</th><th>Action</th></tr></thead><tbody>
         ${rows.length ? rows.map((entry) => {
-          const editable = canCurrentUserManageTaName(entry.recruiter);
+          const editable = canCurrentUserAccessExecutiveFinance();
           const draft = getFinanceWorkdayDraftValue(entry.candidateId, entry.monthKey, String(entry.actualWorkedDays));
           const status = entry.isManual ? "Final · saved" : "Provisional · default weekdays";
           return `<tr><td><strong>${escapeHtml(entry.candidateName)}</strong><br /><span class="muted-cell">${escapeHtml(entry.recruiter)}</span></td><td>${escapeHtml(entry.clientName)}</td><td>${escapeHtml(entry.monthLabel)}</td><td>${entry.eligibleWorkingDays} of ${entry.standardWorkingDays}</td><td><input class="tracker-input" type="number" min="0" max="${entry.eligibleWorkingDays}" step="1" data-finance-workdays data-candidate-id="${escapeHtml(entry.candidateId)}" data-month-key="${escapeHtml(entry.monthKey)}" value="${escapeHtml(String(draft))}" ${editable ? "" : "disabled"} /></td><td>${formatCurrency(entry.revenue)}<br /><span class="muted-cell">Cost ${formatCurrency(entry.cost)}</span></td><td><span class="muted-cell">${status}</span></td><td><button class="tool-btn" type="button" data-action="save-contract-workdays" data-candidate-id="${escapeHtml(entry.candidateId)}" data-month-key="${escapeHtml(entry.monthKey)}" ${editable ? "" : "disabled"}>Save days</button></td></tr>`;
