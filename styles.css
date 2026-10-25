@@ -878,6 +878,33 @@ select {
   background: linear-gradient(180deg, rgba(13, 35, 59, 0.98), rgba(10, 25, 43, 0.98));
 }
 
+.delivery-cost-forecast-panel {
+  border-color: rgba(82, 190, 160, 0.48);
+}
+
+.delivery-cost-view-control {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 205px;
+}
+
+.delivery-cost-view-control > span {
+  color: #9eb5d2;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.delivery-cost-view-control select {
+  min-height: 2.45rem;
+  border: 1px solid rgba(86, 137, 191, 0.58);
+  border-radius: 10px;
+  background: rgba(6, 22, 40, 0.78);
+  color: #edf5ff;
+  padding: 0.48rem 0.58rem;
+}
+
 .finance-intelligence-panel .chart-card {
   min-height: 245px;
 }
@@ -902,6 +929,10 @@ select {
 @media (max-width: 700px) {
   .finance-filters {
     grid-template-columns: 1fr;
+  }
+
+  .delivery-cost-view-control {
+    width: 100%;
   }
 }
 

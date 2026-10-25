@@ -449,7 +449,8 @@ const ui = {
     clientId: "all",
     recruiter: "all",
     candidateId: "all",
-    contractStatus: "all"
+    contractStatus: "all",
+    deliveryCostView: "overall"
   },
   bulkUpload: {
     isProcessing: false,
@@ -814,7 +815,7 @@ function onSectionClick(event) {
   }
 
   if (action === "clear-finance-filters") {
-    ui.revenue = { period: "current-month", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all" };
+    ui.revenue = { period: "current-month", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all", deliveryCostView: "overall" };
     renderSection();
     return;
   }
@@ -1617,6 +1618,12 @@ function onSectionChange(event) {
 
   if (event.target.matches("[data-action='finance-contract-status-filter']")) {
     ui.revenue.contractStatus = event.target.value || "all";
+    renderSection();
+    return;
+  }
+
+  if (event.target.matches("[data-action='delivery-cost-view']")) {
+    ui.revenue.deliveryCostView = ["overall", "client", "candidate"].includes(event.target.value) ? event.target.value : "overall";
     renderSection();
     return;
   }
@@ -9229,6 +9236,61 @@ function getFinanceForecast(finance, asOf = getFinanceTodayISO()) {
   };
 }
 
+function getMonthEndDeliveryCostForecast(finance, asOf = getFinanceTodayISO()) {
+  const monthKey = getFinanceCurrentMonthKey(asOf);
+  const placementIds = new Set(finance.placements.map((row) => row.placementId));
+  const currentEntries = finance.ledger.filter((entry) => placementIds.has(entry.placementId) && entry.monthKey === monthKey);
+  const rows = currentEntries.map((entry) => {
+    if (entry.engagementType === "Contractual") {
+      const rate = getPlacementFinanceRate(entry.placement, entry.engagementType, `${monthKey}-01`);
+      const runRate = getContractMonthlyRunRate(entry.placement, monthKey, asOf);
+      const dailyCost = entry.standardWorkingDays ? rate.cost / entry.standardWorkingDays : 0;
+      const expectedCost = Math.round(dailyCost * runRate.projectedWorkedDays);
+      return {
+        ...entry,
+        accruedCost: entry.cost,
+        remainingCost: Math.max(0, expectedCost - entry.cost),
+        expectedCost,
+        billableDayPace: runRate.billableDayPace,
+        typeLabel: "C2C monthly delivery cost"
+      };
+    }
+    return {
+      ...entry,
+      accruedCost: entry.cost,
+      remainingCost: 0,
+      expectedCost: entry.cost,
+      billableDayPace: null,
+      typeLabel: "FTE one-time delivery cost"
+    };
+  });
+  const totals = rows.reduce((sum, row) => ({
+    expectedCost: sum.expectedCost + row.expectedCost,
+    accruedCost: sum.accruedCost + row.accruedCost,
+    remainingCost: sum.remainingCost + row.remainingCost,
+    c2cCost: sum.c2cCost + (row.engagementType === "Contractual" ? row.expectedCost : 0),
+    fteCost: sum.fteCost + (row.engagementType === "FTE" ? row.expectedCost : 0)
+  }), { expectedCost: 0, accruedCost: 0, remainingCost: 0, c2cCost: 0, fteCost: 0 });
+  const groupBy = (key, label) => Array.from(rows.reduce((groups, row) => {
+    const groupKey = String(row[key] || "unassigned");
+    const current = groups.get(groupKey) || { key: groupKey, label: row[label] || "Unassigned", candidates: new Set(), expectedCost: 0, accruedCost: 0, remainingCost: 0 };
+    current.candidates.add(row.candidateId);
+    current.expectedCost += row.expectedCost;
+    current.accruedCost += row.accruedCost;
+    current.remainingCost += row.remainingCost;
+    groups.set(groupKey, current);
+    return groups;
+  }, new Map()).values()).map((row) => ({ ...row, candidateCount: row.candidates.size })).sort((left, right) => right.expectedCost - left.expectedCost || left.label.localeCompare(right.label));
+  return {
+    monthKey,
+    monthLabel: getFinanceMonthLabel(monthKey),
+    rows: rows.sort((left, right) => right.expectedCost - left.expectedCost || left.candidateName.localeCompare(right.candidateName)),
+    totals,
+    clientGroups: groupBy("clientId", "clientName"),
+    candidateGroups: groupBy("candidateId", "candidateName")
+  };
+}
+
 function getFinanceContext(options = {}) {
   const asOf = options.asOf || getFinanceTodayISO();
   const selectedPeriod = options.period || ui.revenue.period;
@@ -9457,6 +9519,29 @@ function renderMonthlyRunRateProjection(finance) {
   `;
 }
 
+function renderDeliveryCostCashForecast(finance) {
+  const forecast = getMonthEndDeliveryCostForecast(finance);
+  const view = ui.revenue.deliveryCostView || "overall";
+  const groupedRows = view === "client" ? forecast.clientGroups : view === "candidate" ? forecast.candidateGroups : [];
+  const breakdown = view === "overall"
+    ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Client</th><th>Type</th><th>Cost accrued</th><th>Cash remaining</th><th>Expected month-end cost</th><th>Run-rate basis</th></tr></thead><tbody>${forecast.rows.length ? forecast.rows.map((row) => `<tr><td><strong>${escapeHtml(row.candidateName)}</strong><br /><span class="muted-cell">${escapeHtml(row.recruiter)}</span></td><td>${escapeHtml(row.clientName)}</td><td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.typeLabel)}</span></td><td>${formatCurrency(row.accruedCost)}</td><td>${formatCurrency(row.remainingCost)}</td><td><strong>${formatCurrency(row.expectedCost)}</strong></td><td>${row.billableDayPace === null ? "One-time recognition" : `${formatPercent(row.billableDayPace * 100)} billable-day pace`}</td></tr>`).join("") : '<tr><td colspan="7" class="empty">No month-end delivery cost matches the current filters.</td></tr>'}</tbody></table></div>`
+    : `<div class="table-wrap"><table><thead><tr><th>${view === "client" ? "Client" : "Candidate"}</th><th>Deployed candidates</th><th>Cost accrued</th><th>Cash remaining</th><th>Expected month-end cost</th></tr></thead><tbody>${groupedRows.length ? groupedRows.map((row) => `<tr><td><strong>${escapeHtml(row.label)}</strong></td><td>${row.candidateCount}</td><td>${formatCurrency(row.accruedCost)}</td><td>${formatCurrency(row.remainingCost)}</td><td><strong>${formatCurrency(row.expectedCost)}</strong></td></tr>`).join("") : '<tr><td colspan="5" class="empty">No month-end delivery cost matches the current filters.</td></tr>'}</tbody></table></div>`;
+  return `
+    <section class="panel finance-metrics-panel delivery-cost-forecast-panel">
+      <div class="section-heading-row"><div><p class="panel-kicker">Salary cash planning</p><h2 class="panel-title">${escapeHtml(forecast.monthLabel)} Delivery Cost Forecast</h2><p class="panel-subtitle">Expected cost payable by month end for deployed candidates. C2C is forecast at each candidate’s current billable-day pace; FTE cost appears only in its one-time recognition month. The Client and Candidate filters above apply to this view.</p></div><label class="delivery-cost-view-control"><span>Break down by</span><select data-action="delivery-cost-view"><option value="overall" ${view === "overall" ? "selected" : ""}>Overall + candidate detail</option><option value="client" ${view === "client" ? "selected" : ""}>Client</option><option value="candidate" ${view === "candidate" ? "selected" : ""}>Candidate</option></select></label></div>
+      <div class="metrics-grid">
+        ${metricCard("Expected Month-end Delivery Cost", formatCurrency(forecast.totals.expectedCost))}
+        ${metricCard("Cost Accrued So Far", formatCurrency(forecast.totals.accruedCost))}
+        ${metricCard("Cash Required by Month End", formatCurrency(forecast.totals.remainingCost))}
+        ${metricCard("C2C Delivery Cost", formatCurrency(forecast.totals.c2cCost))}
+        ${metricCard("FTE One-time Cost This Month", formatCurrency(forecast.totals.fteCost))}
+        ${metricCard("Candidates Included", forecast.rows.length)}
+      </div>
+      ${breakdown}
+    </section>
+  `;
+}
+
 function renderFinancialYearForecast(finance) {
   const forecast = getFinanceForecast(finance);
   return `
@@ -9524,6 +9609,8 @@ function renderRevenueSection() {
     </section>
 
     ${renderMonthlyRunRateProjection(operatingFinance)}
+
+    ${renderDeliveryCostCashForecast(finance)}
 
     ${renderFinancialYearForecast(finance)}
 

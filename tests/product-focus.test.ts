@@ -192,6 +192,19 @@ test("executive finance forecasts next periods and year-end from active C2C run 
   assert.match(browser, /\$\{renderFinancialYearForecast\(finance\)\}/);
 });
 
+test("executive finance gives an end-of-month delivery cost and salary cash forecast", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /function getMonthEndDeliveryCostForecast/);
+  assert.match(browser, /Cash Required by Month End/);
+  assert.match(browser, /Delivery Cost Forecast/);
+  assert.match(browser, /data-action="delivery-cost-view"/);
+  assert.match(browser, /Overall \+ candidate detail/);
+  assert.match(browser, /C2C is forecast at each candidate’s current billable-day pace/);
+  assert.match(browser, /FTE cost appears only in its one-time recognition month/);
+  assert.match(browser, /\$\{renderDeliveryCostCashForecast\(finance\)\}/);
+});
+
 test("revenue charts present the most recent month and quarter first", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
