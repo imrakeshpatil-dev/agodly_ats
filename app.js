@@ -61,6 +61,10 @@ const financeEditDrafts = new Map();
 const financeWorkdayDrafts = new Map();
 
 const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Onboarded", "On Hold", "Pool", "Dropped"];
+// These are board-only views. The durable candidate stage remains "Onboarded" so
+// a contractual placement can move between active and closed automatically from
+// its saved end date, without rewriting candidate history.
+const PIPELINE_BOARD_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Active Onboarded", "Contract Closed", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
 const PIPELINE_INACTIVE_STAGES = new Set(["Onboarded", "On Hold", "Pool", "Dropped"]);
 const PIPELINE_PROGRESS_RANK = new Map([
@@ -3341,9 +3345,9 @@ function renderDashboardSection() {
   const submittedThisMonth = candidates.filter((item) => candidateHasReachedStage(item, "Submitted") && isCurrentMonth(item.createdAt)).length;
   const closureTracker = getClosureTrackerMetrics(candidates);
 
-  const funnel = PIPELINE_STAGES.map((stage) => ({
+  const funnel = PIPELINE_BOARD_STAGES.map((stage) => ({
     stage,
-    count: candidates.filter((item) => item.stage === stage).length
+    count: candidates.filter((item) => getPipelineBoardStage(item) === stage).length
   }));
 
   const avgDaysToHire = calculateAvgDaysToHire();
@@ -5760,23 +5764,40 @@ function hydrateAiMatchPlacements(results) {
     .filter(Boolean);
 }
 
+function getPipelineBoardStage(candidate, asOf = getFinanceTodayISO()) {
+  if (candidate?.stage !== "Onboarded") return String(candidate?.stage || "Identified");
+  const placement = findPlacementForCandidate(candidate.id);
+  const job = findById(state.jobs, placement?.jobId || candidate.jobId);
+  const engagementType = getPlacementEngagementType(placement, job, candidate);
+  const endDate = engagementType === "Contractual" ? getPlacementFinanceEndDate(placement) : "";
+  return endDate && endDate < asOf ? "Contract Closed" : "Active Onboarded";
+}
+
+function matchesPipelineBoardStage(candidate, stage) {
+  if (stage === "all") return true;
+  // Preserve the dashboard's existing Onboarded quick-filter: it deliberately
+  // shows both active and closed deployments when invoked from elsewhere.
+  if (stage === "Onboarded") return candidate?.stage === "Onboarded";
+  return getPipelineBoardStage(candidate) === stage;
+}
+
 function renderPipelineSection() {
   const visibleCandidates = filteredCandidates();
   const recruiterOptions = getPipelineRecruiterOptions(visibleCandidates);
   const jobOptions = getPipelineJobOptions(visibleCandidates);
   const candidates = visibleCandidates
-    .filter((item) => (ui.pipelineFilter === "all" ? true : item.stage === ui.pipelineFilter))
+    .filter((item) => matchesPipelineBoardStage(item, ui.pipelineFilter))
     .filter((item) => (ui.pipelineRecruiterFilter === "all" ? true : getPipelineRecruiterKey(item) === ui.pipelineRecruiterFilter))
     .filter((item) => (ui.pipelineJobFilter === "all" ? true : getPipelineJobFilterValue(item) === ui.pipelineJobFilter))
     .sort(comparePipelineCandidates);
-  const visibleStages = PIPELINE_STAGES;
+  const visibleStages = PIPELINE_BOARD_STAGES;
   const canWrite = canCurrentUserWriteRecords();
-  const activeStageCount = new Set(candidates.map((item) => item.stage)).size;
+  const activeStageCount = new Set(candidates.map((item) => getPipelineBoardStage(item))).size;
   const submittedCount = candidates.filter((item) => ["Submitted", "Interview", "Offer"].includes(String(item.stage || ""))).length;
 
   const board = visibleStages
     .map((stage) => {
-      const stageCandidates = candidates.filter((item) => item.stage === stage);
+      const stageCandidates = candidates.filter((item) => getPipelineBoardStage(item) === stage);
       return `
         <section class="pipeline-col">
           <h3>${stage} (${stageCandidates.length})</h3>
@@ -5786,6 +5807,9 @@ function renderPipelineSection() {
                   const job = findById(state.jobs, item.jobId);
                   const role = job?.title || getCandidateCurrentRole(item) || "Unassigned role";
                   const skills = Array.isArray(item.skills) ? item.skills.slice(0, 3) : [];
+                  const placement = findPlacementForCandidate(item.id);
+                  const displayedStage = getPipelineBoardStage(item);
+                  const contractEndDate = displayedStage === "Contract Closed" ? getPlacementFinanceEndDate(placement) : "";
                   return `
                   <article class="pipeline-item">
                     <div class="pipeline-card-head">
@@ -5799,6 +5823,7 @@ function renderPipelineSection() {
                         : ""
                     }
                     <p class="meta">Recruiter: ${escapeHtml(getPipelineRecruiterName(item))}</p>
+                    ${contractEndDate ? `<p class="meta">Contract ended: ${escapeHtml(contractEndDate)}</p>` : ""}
                     <select data-action="move-stage" data-candidate-id="${item.id}" ${canWrite ? "" : "disabled"}>
                       ${PIPELINE_STAGES.map((option) => `<option value="${option}" ${option === item.stage ? "selected" : ""}>${option}</option>`).join("")}
                     </select>
@@ -5827,7 +5852,7 @@ function renderPipelineSection() {
           <span>Stage</span>
           <select data-action="pipeline-filter" aria-label="Filter pipeline by stage">
           <option value="all" ${ui.pipelineFilter === "all" ? "selected" : ""}>All stages</option>
-          ${PIPELINE_STAGES.map((stage) => `<option value="${stage}" ${ui.pipelineFilter === stage ? "selected" : ""}>${stage}</option>`).join("")}
+          ${PIPELINE_BOARD_STAGES.map((stage) => `<option value="${stage}" ${ui.pipelineFilter === stage ? "selected" : ""}>${stage}</option>`).join("")}
           </select>
         </label>
         <label class="pipeline-filter-field">

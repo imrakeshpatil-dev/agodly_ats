@@ -30,6 +30,17 @@ test("browser pipeline treats disposition stages separately from progress rankin
   assert.match(browser, /Use Pool for a suitable candidate who is not attached to an active requirement/);
 });
 
+test("pipeline separates active onboarding from contracts closed by their end date", () => {
+  const browser = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
+
+  assert.match(browser, /PIPELINE_BOARD_STAGES = \["Identified"[\s\S]*"Active Onboarded", "Contract Closed"/);
+  assert.match(browser, /function getPipelineBoardStage\(candidate, asOf = getFinanceTodayISO\(\)\)/);
+  assert.match(browser, /endDate && endDate < asOf \? "Contract Closed" : "Active Onboarded"/);
+  assert.match(browser, /function matchesPipelineBoardStage/);
+  assert.match(browser, /Contract ended:/);
+  assert.match(browser, /durable candidate stage remains "Onboarded"/);
+});
+
 test("candidate page has responsive list, card, and profile-drawer styles", () => {
   const browser = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
   const styles = fs.readFileSync(path.join(projectRoot, "styles.css"), "utf8");
