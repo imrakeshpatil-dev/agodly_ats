@@ -64,7 +64,7 @@ const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review"
 // These are board-only views. The durable candidate stage remains "Onboarded" so
 // a contractual placement can move between active and closed automatically from
 // its saved end date, without rewriting candidate history.
-const PIPELINE_BOARD_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "Active Onboarded", "Contract Closed", "On Hold", "Pool", "Dropped"];
+const PIPELINE_BOARD_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "FTE Onboarded", "Active Onboarded", "Contract Closed", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
 const PIPELINE_INACTIVE_STAGES = new Set(["Onboarded", "On Hold", "Pool", "Dropped"]);
 const PIPELINE_PROGRESS_RANK = new Map([
@@ -5769,6 +5769,7 @@ function getPipelineBoardStage(candidate, asOf = getFinanceTodayISO()) {
   const placement = findPlacementForCandidate(candidate.id);
   const job = findById(state.jobs, placement?.jobId || candidate.jobId);
   const engagementType = getPlacementEngagementType(placement, job, candidate);
+  if (engagementType === "FTE") return "FTE Onboarded";
   const endDate = engagementType === "Contractual" ? getPlacementFinanceEndDate(placement) : "";
   return endDate && endDate < asOf ? "Contract Closed" : "Active Onboarded";
 }
