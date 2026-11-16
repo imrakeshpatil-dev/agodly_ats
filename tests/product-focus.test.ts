@@ -159,7 +159,8 @@ test("operating finance separates the current month from closed and historical c
   assert.match(browser, /if \(period === "previous-quarter"\)/);
   assert.match(browser, /if \(startDate && startDate > asOf\) return "Scheduled"/);
   assert.match(browser, /if \(!shared\.startDate \|\| shared\.startDate > now\) return \[\]/);
-  assert.match(browser, /MTD Recognised Revenue/);
+  assert.match(browser, /Projected Period Close/);
+  assert.match(browser, /Month-End Forecast Revenue/);
   assert.match(browser, /Previous Quarter Margin/);
   assert.match(browser, /closed contracts are historical only/);
 });
@@ -186,8 +187,9 @@ test("executive finance projects the current C2C month from the recorded billabl
   assert.match(browser, /function getContractMonthlyRunRate/);
   assert.match(browser, /function getMonthlyRunRateForecast/);
   assert.match(browser, /actualWorkedDays \* \(eligibleWorkingDays \/ elapsedEligibleWorkingDays\)/);
-  assert.match(browser, /Projected Monthly Revenue & Margin/);
+  assert.match(browser, /Projected Monthly Revenue, Cost & Margin/);
   assert.match(browser, /Projected Monthly Revenue/);
+  assert.match(browser, /Projected Monthly Delivery Cost/);
   assert.match(browser, /Projected Monthly Margin/);
   assert.match(browser, /FTE and closed-contract amounts stay actual/);
 });
@@ -204,6 +206,18 @@ test("executive finance forecasts next periods and year-end from active C2C run 
   assert.match(browser, /Contracts with an end date stop on that date/);
   assert.match(browser, /open-ended contract/);
   assert.match(browser, /\$\{renderFinancialYearForecast\(finance\)\}/);
+});
+
+test("executive finance leads with projected month, quarter, and FY close totals", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /function renderProjectedPeriodClose/);
+  assert.match(browser, /Quarter-End Forecast Cost/);
+  assert.match(browser, /FY-End Forecast Margin/);
+  assert.match(browser, /contract that begins mid-month, calculations start on its saved project start date/);
+  assert.match(browser, /getFinancePlacementScopeRows/);
+  assert.match(browser, /contractStatus === "Scheduled"/);
+  assert.match(browser, /Expected cost/);
 });
 
 test("executive finance gives an end-of-month delivery cost and salary cash forecast", async () => {
