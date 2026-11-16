@@ -30,8 +30,18 @@ export default function HomePage() {
             "window.AGODLY_API_BASE = window.location.origin;"
         }}
       />
-      <Script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js" strategy="afterInteractive" />
-      <Script src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js" strategy="afterInteractive" />
+      <Script
+        src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"
+        strategy="afterInteractive"
+        integrity="sha384-uLiAv4VcjM5H2Jsqzl8EajEaxPugj1CIzQaCjQ8c5//vC+elhxO5pZfXGxoLQi1W"
+        crossOrigin="anonymous"
+      />
+      <Script
+        src="https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js"
+        strategy="afterInteractive"
+        integrity="sha384-nFoSjZIoH3CCp8W639jJyQkuPHinJ2NHe7on1xvlUA7SuGfJAfvMldrsoAVm6ECz"
+        crossOrigin="anonymous"
+      />
       <Script src="/ats-script" strategy="afterInteractive" />
     </>
   );

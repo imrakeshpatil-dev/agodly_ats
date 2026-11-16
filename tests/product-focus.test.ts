@@ -30,6 +30,20 @@ test("AI shortlisting is available from the job workflow, not standalone navigat
   assert.match(browser, /Best-fit candidates for/);
 });
 
+test("the browser shell uses verified external parsing libraries and strict security headers", async () => {
+  const [page, config] = await Promise.all([
+    readFile(path.join(root, "app/page.tsx"), "utf8"),
+    readFile(path.join(root, "next.config.ts"), "utf8")
+  ]);
+
+  assert.match(page, /integrity="sha384-uLiAv4VcjM5H2Jsqzl8EajEaxPugj1CIzQaCjQ8c5\/\/vC\+elhxO5pZfXGxoLQi1W"/);
+  assert.match(page, /integrity="sha384-nFoSjZIoH3CCp8W639jJyQkuPHinJ2NHe7on1xvlUA7SuGfJAfvMldrsoAVm6ECz"/);
+  assert.match(config, /"form-action 'self'"/);
+  assert.match(config, /"upgrade-insecure-requests"/);
+  assert.match(config, /Strict-Transport-Security/);
+  assert.match(config, /Permissions-Policy/);
+});
+
 test("contractual onboarding retains project dates and rolls actual finance up by TA", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
