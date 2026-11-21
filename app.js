@@ -64,7 +64,7 @@ const PIPELINE_STAGES = ["Identified", "Qualified", "Submitted", "Client Review"
 // These are board-only views. The durable candidate stage remains "Onboarded" so
 // a contractual placement can move between active and closed automatically from
 // its saved end date, without rewriting candidate history.
-const PIPELINE_BOARD_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "FTE Onboarded", "Active Onboarded", "Contract Closed", "On Hold", "Pool", "Dropped"];
+const PIPELINE_BOARD_STAGES = ["Identified", "Qualified", "Submitted", "Client Review", "Interview", "Offer", "FTE Onboarded", "Scheduled Onboarding", "Active Onboarded", "Contract Closed", "On Hold", "Pool", "Dropped"];
 const PIPELINE_DISPOSITION_STAGES = new Set(["On Hold", "Pool"]);
 const PIPELINE_INACTIVE_STAGES = new Set(["Onboarded", "On Hold", "Pool", "Dropped"]);
 const PIPELINE_PROGRESS_RANK = new Map([
@@ -453,8 +453,7 @@ const ui = {
     clientId: "all",
     recruiter: "all",
     candidateId: "all",
-    contractStatus: "all",
-    deliveryCostView: "overall"
+    contractStatus: "all"
   },
   bulkUpload: {
     isProcessing: false,
@@ -819,7 +818,7 @@ function onSectionClick(event) {
   }
 
   if (action === "clear-finance-filters") {
-    ui.revenue = { period: "current-month", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all", deliveryCostView: "overall" };
+    ui.revenue = { period: "current-month", clientId: "all", recruiter: "all", candidateId: "all", contractStatus: "all" };
     renderSection();
     return;
   }
@@ -1622,12 +1621,6 @@ function onSectionChange(event) {
 
   if (event.target.matches("[data-action='finance-contract-status-filter']")) {
     ui.revenue.contractStatus = event.target.value || "all";
-    renderSection();
-    return;
-  }
-
-  if (event.target.matches("[data-action='delivery-cost-view']")) {
-    ui.revenue.deliveryCostView = ["overall", "client", "candidate"].includes(event.target.value) ? event.target.value : "overall";
     renderSection();
     return;
   }
@@ -3863,11 +3856,12 @@ function renderRecruiterDashboardPerformance() {
 function renderOnboardedRevenueTracker() {
   if (!canCurrentUserAccessExecutiveFinance()) return "";
   const rows = getOnboardedRevenueRows();
+  const billableRows = rows.filter((row) => row.engagementType !== "Contractual" || row.billingEnabled);
   const missingClientAssignments = rows.filter((row) => !row.clientId);
-  const totalRevenue = rows.reduce((acc, item) => acc + item.revenue, 0);
-  const totalCost = rows.reduce((acc, item) => acc + item.cost, 0);
+  const totalRevenue = billableRows.reduce((acc, item) => acc + item.revenue, 0);
+  const totalCost = billableRows.reduce((acc, item) => acc + item.cost, 0);
   const totalMargin = totalRevenue - totalCost;
-  const contractualRows = rows.filter((item) => item.engagementType === "Contractual");
+  const contractualRows = billableRows.filter((item) => item.engagementType === "Contractual");
   const contractualRevenue = contractualRows.reduce((acc, item) => acc + item.revenue, 0);
   const contractualCost = contractualRows.reduce((acc, item) => acc + item.cost, 0);
   const contractualMargin = contractualRevenue - contractualCost;
@@ -3878,7 +3872,7 @@ function renderOnboardedRevenueTracker() {
       <div class="section-heading-row">
         <div>
           <h2 class="panel-title">Onboarded Revenue & Margin</h2>
-          <p class="panel-subtitle">C2C amounts are monthly recurring rates from start until contract closure. FTE amounts are recognised once on the placement date.</p>
+          <p class="panel-subtitle">Only Active Onboarded C2C placements are included in calculated totals. Use Not started for a planned contract that has not begun billing; a passed contract end date moves it to Contract Closed and stops new calculations. FTE amounts are recognised once on the placement date.</p>
         </div>
         <div class="tracker-summary">
           <span>Overall Revenue ${formatCurrency(totalRevenue)}</span>
@@ -3900,7 +3894,9 @@ function renderOnboardedRevenueTracker() {
               <th>Job</th>
               <th>Client</th>
               <th>Type</th>
-              <th>Recognition / Start</th>
+              <th>Planned Start</th>
+              <th>Billing Status</th>
+              <th>Billable Start</th>
               <th>Contract End / Closure</th>
               <th>Monthly Bill / FTE Fee</th>
               <th>Monthly Cost / FTE Cost</th>
@@ -3920,6 +3916,8 @@ function renderOnboardedRevenueTracker() {
                       const draftValue = (field, savedValue = "") => getFinanceEditDraftValue(row.candidateId, field, savedValue);
                       const clientId = draftValue("clientId", row.clientId);
                       const projectStartDate = draftValue("projectStartDate", row.projectStartDate || "");
+                      const billingStatus = draftValue("billingStatus", row.billingStatus || "Not Started");
+                      const billableStartDate = draftValue("billableStartDate", row.billableStartDate || projectStartDate || "");
                       const projectEndDate = draftValue("projectEndDate", row.projectEndDate || "");
                       const recognitionDate = draftValue("recognitionDate", row.recognitionDate || row.date || "");
                       const revenue = draftValue("revenue", String(Number(row.revenue || 0)));
@@ -3937,6 +3935,8 @@ function renderOnboardedRevenueTracker() {
                           </td>
                           <td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td>
                           <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectStartDate))}" ${editable ? "" : "disabled"} />` : `<input class="tracker-input" type="date" data-finance-field="recognitionDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(recognitionDate))}" ${editable ? "" : "disabled"} />`}</td>
+                          <td>${row.engagementType === "Contractual" ? `<select class="tracker-input" data-finance-field="billingStatus" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}><option value="Not Started" ${billingStatus === "Not Started" ? "selected" : ""}>Not started</option><option value="Active" ${billingStatus === "Active" ? "selected" : ""}>Active</option></select>` : "One-time placement"}</td>
+                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="billableStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(billableStartDate))}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
                           <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectEndDate))}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
                           <td>
                             <input
@@ -3975,7 +3975,7 @@ function renderOnboardedRevenueTracker() {
                       `;
                     })
                     .join("")
-                : `<tr><td colspan="11" class="empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</td></tr>`
+                : `<tr><td colspan="13" class="empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</td></tr>`
             }
           </tbody>
         </table>
@@ -5771,7 +5771,8 @@ function getPipelineBoardStage(candidate, asOf = getFinanceTodayISO()) {
   const engagementType = getPlacementEngagementType(placement, job, candidate);
   if (engagementType === "FTE") return "FTE Onboarded";
   const endDate = engagementType === "Contractual" ? getPlacementFinanceEndDate(placement) : "";
-  return endDate && endDate < asOf ? "Contract Closed" : "Active Onboarded";
+  if (endDate && endDate < asOf) return "Contract Closed";
+  return isContractBillingEnabled(placement, asOf) ? "Active Onboarded" : "Scheduled Onboarding";
 }
 
 function matchesPipelineBoardStage(candidate, stage) {
@@ -7021,9 +7022,12 @@ function getOnboardedRevenueRows() {
         date: placement?.date || todayISO(),
         engagementType,
         projectStartDate,
+        billableStartDate: String(placement?.billableStartDate || projectStartDate || ""),
+        billingStatus: engagementType === "Contractual" ? getPlacementBillingStatusValue(placement) : "",
+        billingEnabled: engagementType !== "Contractual" || isContractBillingEnabled(placement),
         projectEndDate,
         recognitionDate: getPlacementFinanceStartDate(placement, engagementType),
-        contractStatus: engagementType === "Contractual" ? (projectEndDate ? "Completed" : "Active") : "Permanent",
+        contractStatus: engagementType === "Contractual" ? getFinanceContractStatus(placement, engagementType) : "Permanent",
         revenue,
         cost,
         margin,
@@ -7147,6 +7151,8 @@ function savePlacementFinanceRow(candidateId) {
   const endDateInput = findFinanceInput("projectEndDate", candidate.id);
   const recognitionDateInput = findFinanceInput("recognitionDate", candidate.id);
   const clientInput = findFinanceInput("clientId", candidate.id);
+  const billingStatusInput = findFinanceInput("billingStatus", candidate.id);
+  const billableStartDateInput = findFinanceInput("billableStartDate", candidate.id);
   const draftValue = (field, input, fallback = "") => getFinanceEditDraftValue(candidate.id, field, input?.value ?? fallback);
   const revenue = normalizeMoneyValue(draftValue("revenue", revenueInput));
   const cost = normalizeMoneyValue(draftValue("cost", costInput));
@@ -7158,6 +7164,8 @@ function savePlacementFinanceRow(candidateId) {
   const projectEndDate = String(draftValue("projectEndDate", endDateInput, placement?.projectEndDate || placement?.endDate || "")).trim();
   const recognitionDate = String(draftValue("recognitionDate", recognitionDateInput, placement?.recognitionDate || placement?.date || "")).trim();
   const clientId = String(draftValue("clientId", clientInput, placement?.clientId || "")).trim();
+  const billingStatus = String(draftValue("billingStatus", billingStatusInput, getPlacementBillingStatusValue(placement))).trim();
+  const billableStartDate = String(draftValue("billableStartDate", billableStartDateInput, placement?.billableStartDate || projectStartDate)).trim();
 
   if (!clientId || !findById(state.clients, clientId)) {
     alert("Assign a valid client before saving deployed candidate finance.");
@@ -7166,6 +7174,18 @@ function savePlacementFinanceRow(candidateId) {
 
   if (engagementType === "Contractual" && !projectStartDate) {
     alert("A contractual placement needs its project start date before finance can be saved.");
+    return;
+  }
+  if (engagementType === "Contractual" && !["Not Started", "Active"].includes(billingStatus)) {
+    alert("Choose whether the contractual placement is Not Started or Active for billing.");
+    return;
+  }
+  if (engagementType === "Contractual" && billingStatus === "Active" && !billableStartDate) {
+    alert("An active contractual placement needs its actual billable start date before finance can be saved.");
+    return;
+  }
+  if (billableStartDate && projectStartDate && billableStartDate < projectStartDate) {
+    alert("Billable start date cannot be earlier than the planned project start date.");
     return;
   }
   if (engagementType === "FTE" && !recognitionDate) {
@@ -7190,6 +7210,8 @@ function savePlacementFinanceRow(candidateId) {
       date: todayISO(),
       engagementType,
       projectStartDate: engagementType === "Contractual" ? projectStartDate : "",
+      billableStartDate: "",
+      billingStatus: engagementType === "Contractual" ? "Not Started" : "",
       projectEndDate: "",
       recognitionDate: engagementType === "FTE" ? recognitionDate || todayISO() : "",
       rateHistory: [],
@@ -7204,6 +7226,8 @@ function savePlacementFinanceRow(candidateId) {
   placement.engagementType = engagementType;
   if (engagementType === "Contractual") {
     placement.projectStartDate = projectStartDate;
+    placement.billableStartDate = billingStatus === "Active" ? billableStartDate : "";
+    placement.billingStatus = billingStatus;
     placement.projectEndDate = projectEndDate;
     placement.closureDate = projectEndDate;
     placement.monthlyRevenue = revenue;
@@ -7223,7 +7247,7 @@ function savePlacementFinanceRow(candidateId) {
     .sort((left, right) => String(left.effectiveDate).localeCompare(String(right.effectiveDate)));
   candidate.stage = "Onboarded";
 
-  recordActivity("revenue", `${engagementType === "Contractual" ? "C2C monthly rate" : "FTE one-time fee"} updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${projectEndDate ? ` · closed ${projectEndDate}` : ""}`);
+  recordActivity("revenue", `${engagementType === "Contractual" ? `C2C ${billingStatus.toLowerCase()} billing` : "FTE one-time fee"} updated for ${candidate.name}: ${formatCurrency(revenue)} revenue, ${formatCurrency(margin)} margin${billableStartDate && billingStatus === "Active" ? ` · billing started ${billableStartDate}` : ""}${projectEndDate ? ` · closed ${projectEndDate}` : ""}`);
   clearFinanceEditDraft(candidate.id);
   saveAndRender();
 }
@@ -8843,6 +8867,25 @@ function getPlacementFinanceStartDate(placement, engagementType) {
   ).slice(0, 10);
 }
 
+function getPlacementBillableStartDate(placement) {
+  return String(placement?.billableStartDate || placement?.projectStartDate || placement?.startDate || "").slice(0, 10);
+}
+
+function getPlacementBillingStatusValue(placement, asOf = getFinanceTodayISO()) {
+  const savedStatus = String(placement?.billingStatus || "").trim();
+  if (["Not Started", "Active"].includes(savedStatus)) return savedStatus;
+  const billableStartDate = getPlacementBillableStartDate(placement);
+  return billableStartDate && billableStartDate <= asOf ? "Active" : "Not Started";
+}
+
+function isContractBillingEnabled(placement, asOf = getFinanceTodayISO()) {
+  const savedStatus = getPlacementBillingStatusValue(placement, asOf);
+  if (savedStatus === "Not Started") return false;
+  const billableStartDate = getPlacementBillableStartDate(placement);
+  if (!billableStartDate) return false;
+  return savedStatus === "Active";
+}
+
 function getPlacementFinanceEndDate(placement) {
   return String(placement?.closureDate || placement?.projectEndDate || placement?.endDate || "").slice(0, 10);
 }
@@ -8915,7 +8958,7 @@ function countFinanceWeekdays(startDate, endDate) {
 
 function getContractWorkdayContext(placement, monthKey, asOf = getFinanceTodayISO()) {
   const bounds = getFinanceMonthBounds(monthKey);
-  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const startDate = getPlacementBillableStartDate(placement);
   const closureDate = getPlacementFinanceEndDate(placement);
   if (!bounds || !startDate) return { standardWorkingDays: 0, eligibleWorkingDays: 0, actualWorkedDays: 0, isFinal: false, isManual: false };
   const activeEnd = closureDate && closureDate < asOf ? closureDate : asOf;
@@ -8931,7 +8974,7 @@ function getContractWorkdayContext(placement, monthKey, asOf = getFinanceTodayIS
 
 function getContractMonthlyRunRate(placement, monthKey, asOf = getFinanceTodayISO()) {
   const bounds = getFinanceMonthBounds(monthKey);
-  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const startDate = getPlacementBillableStartDate(placement);
   const closureDate = getPlacementFinanceEndDate(placement);
   if (!bounds || !startDate || startDate > bounds.endDate) {
     return { eligibleWorkingDays: 0, elapsedEligibleWorkingDays: 0, actualWorkedDays: 0, billableDayPace: 0, projectedWorkedDays: 0, isComplete: false };
@@ -9043,10 +9086,11 @@ function getPlacementFinanceRate(placement, engagementType, effectiveDate) {
 
 function getFinanceContractStatus(placement, engagementType, asOf = getFinanceTodayISO()) {
   if (engagementType !== "Contractual") return "FTE";
-  const startDate = getPlacementFinanceStartDate(placement, engagementType);
+  const startDate = getPlacementBillableStartDate(placement);
   const endDate = getPlacementFinanceEndDate(placement);
-  if (startDate && startDate > asOf) return "Scheduled";
-  return endDate && endDate < asOf ? "Closed" : "Active";
+  if (endDate && endDate < asOf) return "Closed";
+  if (!isContractBillingEnabled(placement, asOf) || startDate > asOf) return "Scheduled";
+  return "Active";
 }
 
 function getFinancePlacementScopeRows(asOf = getFinanceTodayISO()) {
@@ -9055,11 +9099,13 @@ function getFinancePlacementScopeRows(asOf = getFinanceTodayISO()) {
     const job = findById(state.jobs, placement.jobId || candidate?.jobId);
     const engagementType = getPlacementEngagementType(placement, job, candidate);
     const client = findById(state.clients, placement.clientId || "");
+    const billingEnabled = engagementType !== "Contractual" || isContractBillingEnabled(placement, asOf);
     return {
       placementId: String(placement.id), placement, candidateId: String(placement.candidateId || ""), candidateName: String(candidate?.name || placement.candidateId || "Unknown candidate"),
       clientId: String(placement.clientId || ""), clientName: String(client?.name || placement.clientName || "Unassigned client — action required"),
       recruiter: String(placement.recruiter || candidate?.recruiter || "Unassigned"), jobTitle: String(job?.title || "Unassigned job"), engagementType,
-      contractStatus: getFinanceContractStatus(placement, engagementType, asOf), startDate: getPlacementFinanceStartDate(placement, engagementType), endDate: getPlacementFinanceEndDate(placement)
+      contractStatus: getFinanceContractStatus(placement, engagementType, asOf), startDate: engagementType === "Contractual" ? getPlacementBillableStartDate(placement) : getPlacementFinanceStartDate(placement, engagementType), plannedStartDate: getPlacementFinanceStartDate(placement, engagementType), endDate: getPlacementFinanceEndDate(placement),
+      billingEnabled, isOnboarded: candidate?.stage === "Onboarded"
     };
   });
 }
@@ -9068,6 +9114,7 @@ function buildFinanceLedger() {
   const now = getFinanceTodayISO();
   return getFinancePlacementScopeRows(now).flatMap((shared) => {
     const { placement, engagementType } = shared;
+    if (!shared.isOnboarded || (engagementType === "Contractual" && !shared.billingEnabled)) return [];
     if (engagementType === "Contractual") {
       const actualEnd = shared.endDate && shared.endDate < now ? shared.endDate : now;
       return getFinanceMonthsBetween(shared.startDate, actualEnd).map((monthKey) => {
@@ -9207,7 +9254,7 @@ function getContractForecastBillablePace(placement, asOf = getFinanceTodayISO())
 
 function getC2CFutureMonthForecast(placement, monthKey, asOf = getFinanceTodayISO()) {
   const bounds = getFinanceMonthBounds(monthKey);
-  const startDate = getPlacementFinanceStartDate(placement, "Contractual");
+  const startDate = getPlacementBillableStartDate(placement);
   const endDate = getPlacementFinanceEndDate(placement);
   if (!bounds || !startDate || startDate > bounds.endDate || (endDate && endDate < bounds.startDate)) {
     return { placementId: String(placement?.id || ""), monthKey, revenue: 0, cost: 0, margin: 0, eligibleWorkingDays: 0, billableDayPace: 0 };
@@ -9291,70 +9338,6 @@ function getFinanceForecast(finance, asOf = getFinanceTodayISO()) {
   };
 }
 
-function getMonthEndDeliveryCostForecast(finance, asOf = getFinanceTodayISO()) {
-  const monthKey = getFinanceCurrentMonthKey(asOf);
-  const placementIds = new Set(finance.placements.map((row) => row.placementId));
-  const currentEntries = finance.ledger.filter((entry) => placementIds.has(entry.placementId) && entry.monthKey === monthKey);
-  const recognisedRows = currentEntries.map((entry) => {
-    if (entry.engagementType === "Contractual") {
-      const rate = getPlacementFinanceRate(entry.placement, entry.engagementType, `${monthKey}-01`);
-      const runRate = getContractMonthlyRunRate(entry.placement, monthKey, asOf);
-      const dailyCost = entry.standardWorkingDays ? rate.cost / entry.standardWorkingDays : 0;
-      const expectedCost = Math.round(dailyCost * runRate.projectedWorkedDays);
-      return {
-        ...entry,
-        accruedCost: entry.cost,
-        remainingCost: Math.max(0, expectedCost - entry.cost),
-        expectedCost,
-        billableDayPace: runRate.billableDayPace,
-        typeLabel: "C2C monthly delivery cost"
-      };
-    }
-    return {
-      ...entry,
-      accruedCost: entry.cost,
-      remainingCost: 0,
-      expectedCost: entry.cost,
-      billableDayPace: null,
-      typeLabel: "FTE one-time delivery cost"
-    };
-  });
-  const scheduledRows = (finance.runRate.forecastRows || []).filter((entry) => entry.isScheduled).map((entry) => ({
-    ...entry,
-    accruedCost: 0,
-    remainingCost: entry.projectedCost,
-    expectedCost: entry.projectedCost,
-    billableDayPace: entry.billableDayPace,
-    typeLabel: "Scheduled C2C delivery cost"
-  }));
-  const rows = [...recognisedRows, ...scheduledRows];
-  const totals = rows.reduce((sum, row) => ({
-    expectedCost: sum.expectedCost + row.expectedCost,
-    accruedCost: sum.accruedCost + row.accruedCost,
-    remainingCost: sum.remainingCost + row.remainingCost,
-    c2cCost: sum.c2cCost + (row.engagementType === "Contractual" ? row.expectedCost : 0),
-    fteCost: sum.fteCost + (row.engagementType === "FTE" ? row.expectedCost : 0)
-  }), { expectedCost: 0, accruedCost: 0, remainingCost: 0, c2cCost: 0, fteCost: 0 });
-  const groupBy = (key, label) => Array.from(rows.reduce((groups, row) => {
-    const groupKey = String(row[key] || "unassigned");
-    const current = groups.get(groupKey) || { key: groupKey, label: row[label] || "Unassigned", candidates: new Set(), expectedCost: 0, accruedCost: 0, remainingCost: 0 };
-    current.candidates.add(row.candidateId);
-    current.expectedCost += row.expectedCost;
-    current.accruedCost += row.accruedCost;
-    current.remainingCost += row.remainingCost;
-    groups.set(groupKey, current);
-    return groups;
-  }, new Map()).values()).map((row) => ({ ...row, candidateCount: row.candidates.size })).sort((left, right) => right.expectedCost - left.expectedCost || left.label.localeCompare(right.label));
-  return {
-    monthKey,
-    monthLabel: getFinanceMonthLabel(monthKey),
-    rows: rows.sort((left, right) => right.expectedCost - left.expectedCost || left.candidateName.localeCompare(right.candidateName)),
-    totals,
-    clientGroups: groupBy("clientId", "clientName"),
-    candidateGroups: groupBy("candidateId", "candidateName")
-  };
-}
-
 function getFinanceContext(options = {}) {
   const asOf = options.asOf || getFinanceTodayISO();
   const selectedPeriod = options.period || ui.revenue.period;
@@ -9393,8 +9376,8 @@ function getFinanceContext(options = {}) {
     const lifetimeRevenue = ledger.filter((entry) => entry.placementId === row.placementId).reduce((sum, entry) => sum + entry.revenue, 0);
     return { ...row, ...selected, lifetimeRevenue };
   }).sort((left, right) => right.revenue - left.revenue || left.candidateName.localeCompare(right.candidateName));
-  const activeContracts = scopedRows.filter((row) => row.engagementType === "Contractual" && row.contractStatus === "Active");
-  const forecastContracts = scopedRows.filter((row) => row.engagementType === "Contractual" && (row.contractStatus === "Active" || row.contractStatus === "Scheduled"));
+  const activeContracts = scopedRows.filter((row) => row.isOnboarded && row.engagementType === "Contractual" && row.billingEnabled && row.contractStatus === "Active");
+  const forecastContracts = scopedRows.filter((row) => row.isOnboarded && row.engagementType === "Contractual" && row.billingEnabled && (row.contractStatus === "Active" || row.contractStatus === "Scheduled"));
   const activeDeployedCandidates = scopedRows.filter((row) => row.contractStatus === "Active" || (row.engagementType === "FTE" && row.startDate && row.startDate <= asOf));
   const activeMrr = activeContracts.reduce((sum, row) => sum + getPlacementFinanceRate(row.placement, row.engagementType, asOf).revenue, 0);
   const runRate = getMonthlyRunRateForecast(ledger, placementIds, asOf, forecastContracts);
@@ -9507,7 +9490,7 @@ function renderFinanceFilters(finance) {
         ${hasFilters ? '<button class="tool-btn" type="button" data-action="clear-finance-filters">Clear filters</button>' : ""}
       </div>
       <div class="finance-filters">
-        <label><span>Financial period</span><select data-action="finance-period-filter"><optgroup label="Operating & comparison"><option value="current-month" ${ui.revenue.period === "current-month" ? "selected" : ""}>Current month</option><option value="previous-month" ${ui.revenue.period === "previous-month" ? "selected" : ""}>Previous month</option><option value="current-quarter" ${ui.revenue.period === "current-quarter" ? "selected" : ""}>Current quarter</option><option value="previous-quarter" ${ui.revenue.period === "previous-quarter" ? "selected" : ""}>Previous quarter</option><option value="fytd" ${ui.revenue.period === "fytd" ? "selected" : ""}>Financial year to date</option></optgroup><option value="all">All financial history</option><optgroup label="Financial year">${finance.periodOptions.financialYears.map((year) => `<option value="fy:${year}" ${ui.revenue.period === `fy:${year}` ? "selected" : ""}>FY ${year}–${String(year + 1).slice(-2)}</option>`).join("")}</optgroup><optgroup label="Quarter">${finance.periodOptions.quarters.map((entry) => `<option value="${entry.quarterKey}" ${ui.revenue.period === entry.quarterKey ? "selected" : ""}>${escapeHtml(entry.quarterLabel)}</option>`).join("")}</optgroup><optgroup label="Month">${finance.periodOptions.months.map((entry) => `<option value="fm:${entry.monthKey}" ${ui.revenue.period === `fm:${entry.monthKey}` ? "selected" : ""}>${escapeHtml(entry.monthLabel)}</option>`).join("")}</optgroup></select></label>
+        <label><span>Financial period</span><select data-action="finance-period-filter"><optgroup label="Operating & comparison"><option value="current-month" ${ui.revenue.period === "current-month" ? "selected" : ""}>Current month</option><option value="previous-month" ${ui.revenue.period === "previous-month" ? "selected" : ""}>Previous month</option><option value="current-quarter" ${ui.revenue.period === "current-quarter" ? "selected" : ""}>Current quarter</option><option value="previous-quarter" ${ui.revenue.period === "previous-quarter" ? "selected" : ""}>Previous quarter</option><option value="fytd" ${ui.revenue.period === "fytd" ? "selected" : ""}>Financial year to date</option></optgroup><option value="all">All financial history</option><optgroup label="Financial year · Apr–Mar (Q4 Jan–Mar)">${finance.periodOptions.financialYears.map((year) => `<option value="fy:${year}" ${ui.revenue.period === `fy:${year}` ? "selected" : ""}>FY ${year}–${String(year + 1).slice(-2)}</option>`).join("")}</optgroup><optgroup label="Quarter">${finance.periodOptions.quarters.map((entry) => `<option value="${entry.quarterKey}" ${ui.revenue.period === entry.quarterKey ? "selected" : ""}>${escapeHtml(entry.quarterLabel)}</option>`).join("")}</optgroup><optgroup label="Month">${finance.periodOptions.months.map((entry) => `<option value="fm:${entry.monthKey}" ${ui.revenue.period === `fm:${entry.monthKey}` ? "selected" : ""}>${escapeHtml(entry.monthLabel)}</option>`).join("")}</optgroup></select></label>
         <label><span>Client</span><select data-action="finance-client-filter"><option value="all">All clients</option>${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${ui.revenue.clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}</select></label>
         <label><span>TA owner</span><select data-action="finance-recruiter-filter"><option value="all">All TAs</option>${[...new Set(finance.ledger.map((entry) => entry.recruiter))].sort().map((name) => `<option value="${escapeHtml(name)}" ${ui.revenue.recruiter === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label>
         <label><span>Candidate</span><select data-action="finance-candidate-filter"><option value="all">All deployed candidates</option>${[...new Map(finance.ledger.map((entry) => [entry.candidateId, entry])).values()].map((entry) => `<option value="${escapeHtml(entry.candidateId)}" ${ui.revenue.candidateId === entry.candidateId ? "selected" : ""}>${escapeHtml(entry.candidateName)}</option>`).join("")}</select></label>
@@ -9607,34 +9590,11 @@ function renderProjectedPeriodClose(finance) {
   `;
 }
 
-function renderDeliveryCostCashForecast(finance) {
-  const forecast = getMonthEndDeliveryCostForecast(finance);
-  const view = ui.revenue.deliveryCostView || "overall";
-  const groupedRows = view === "client" ? forecast.clientGroups : view === "candidate" ? forecast.candidateGroups : [];
-  const breakdown = view === "overall"
-    ? `<div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Client</th><th>Type</th><th>Cost accrued</th><th>Cash remaining</th><th>Expected month-end cost</th><th>Run-rate basis</th></tr></thead><tbody>${forecast.rows.length ? forecast.rows.map((row) => `<tr><td><strong>${escapeHtml(row.candidateName)}</strong><br /><span class="muted-cell">${escapeHtml(row.recruiter)}</span></td><td>${escapeHtml(row.clientName)}</td><td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.typeLabel)}</span></td><td>${formatCurrency(row.accruedCost)}</td><td>${formatCurrency(row.remainingCost)}</td><td><strong>${formatCurrency(row.expectedCost)}</strong></td><td>${row.billableDayPace === null ? "One-time recognition" : `${formatPercent(row.billableDayPace * 100)} billable-day pace`}</td></tr>`).join("") : '<tr><td colspan="7" class="empty">No month-end delivery cost matches the current filters.</td></tr>'}</tbody></table></div>`
-    : `<div class="table-wrap"><table><thead><tr><th>${view === "client" ? "Client" : "Candidate"}</th><th>Deployed candidates</th><th>Cost accrued</th><th>Cash remaining</th><th>Expected month-end cost</th></tr></thead><tbody>${groupedRows.length ? groupedRows.map((row) => `<tr><td><strong>${escapeHtml(row.label)}</strong></td><td>${row.candidateCount}</td><td>${formatCurrency(row.accruedCost)}</td><td>${formatCurrency(row.remainingCost)}</td><td><strong>${formatCurrency(row.expectedCost)}</strong></td></tr>`).join("") : '<tr><td colspan="5" class="empty">No month-end delivery cost matches the current filters.</td></tr>'}</tbody></table></div>`;
-  return `
-    <section class="panel finance-metrics-panel delivery-cost-forecast-panel">
-      <div class="section-heading-row"><div><p class="panel-kicker">Salary cash planning</p><h2 class="panel-title">${escapeHtml(forecast.monthLabel)} Delivery Cost Forecast</h2><p class="panel-subtitle">Expected cost payable by month end for deployed candidates, including a C2C contract scheduled to start later this month. C2C is forecast at each candidate’s current billable-day pace; FTE cost appears only in its one-time recognition month. The Client and Candidate filters above apply to this view.</p></div><label class="delivery-cost-view-control"><span>Break down by</span><select data-action="delivery-cost-view"><option value="overall" ${view === "overall" ? "selected" : ""}>Overall + candidate detail</option><option value="client" ${view === "client" ? "selected" : ""}>Client</option><option value="candidate" ${view === "candidate" ? "selected" : ""}>Candidate</option></select></label></div>
-      <div class="metrics-grid">
-        ${metricCard("Expected Month-end Delivery Cost", formatCurrency(forecast.totals.expectedCost))}
-        ${metricCard("Cost Accrued So Far", formatCurrency(forecast.totals.accruedCost))}
-        ${metricCard("Cash Required by Month End", formatCurrency(forecast.totals.remainingCost))}
-        ${metricCard("C2C Delivery Cost", formatCurrency(forecast.totals.c2cCost))}
-        ${metricCard("FTE One-time Cost This Month", formatCurrency(forecast.totals.fteCost))}
-        ${metricCard("Candidates Included", forecast.rows.length)}
-      </div>
-      ${breakdown}
-    </section>
-  `;
-}
-
 function renderFinancialYearForecast(finance) {
   const forecast = getFinanceForecast(finance);
   return `
     <section class="panel finance-metrics-panel finance-fy-forecast-panel">
-      <div class="section-heading-row"><div><p class="panel-kicker">Forward plan</p><h2 class="panel-title">Run-rate Forecast to ${escapeHtml(forecast.financialYearLabel)} End</h2><p class="panel-subtitle">Projected through ${escapeHtml(forecast.fyEndDate)} using each active C2C contract’s current billable-day pace. Contracts with an end date stop on that date; ${forecast.openEndedContracts} open-ended contract${forecast.openEndedContracts === 1 ? " is" : "s are"} assumed to continue through year end. FTE is one-time actual revenue only.</p></div></div>
+      <div class="section-heading-row"><div><p class="panel-kicker">Forward plan</p><h2 class="panel-title">Run-rate Forecast to ${escapeHtml(forecast.financialYearLabel)} End</h2><p class="panel-subtitle">The financial year runs 1 April to 31 March; January–March is Q4. Projected through ${escapeHtml(forecast.fyEndDate)} using each active C2C contract’s current billable-day pace. Contracts with an end date stop on that date; ${forecast.openEndedContracts} open-ended contract${forecast.openEndedContracts === 1 ? " is" : "s are"} assumed to continue through year end. FTE is one-time actual revenue only.</p></div></div>
       <div class="metrics-grid">
         ${metricCard(`${forecast.nextMonth.monthLabel} Forecast Revenue`, formatCurrency(forecast.nextMonth.revenue))}
         ${metricCard(`${forecast.nextMonth.monthLabel} Forecast Cost`, formatCurrency(forecast.nextMonth.cost))}
@@ -9689,8 +9649,6 @@ function renderRevenueSection() {
     ${renderProjectedPeriodClose(finance)}
 
     ${renderMonthlyRunRateProjection(finance)}
-
-    ${renderDeliveryCostCashForecast(finance)}
 
     ${renderFinancialYearForecast(finance)}
 

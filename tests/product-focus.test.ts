@@ -48,6 +48,8 @@ test("contractual onboarding retains project dates and rolls actual finance up b
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
   assert.match(browser, /data-finance-field="projectStartDate"/);
+  assert.match(browser, /data-finance-field="billingStatus"/);
+  assert.match(browser, /data-finance-field="billableStartDate"/);
   assert.match(browser, /data-finance-field="projectEndDate"/);
   assert.match(browser, /A contractual placement needs its project start date/);
   assert.match(browser, /Project end date cannot be earlier than the start date/);
@@ -157,7 +159,7 @@ test("operating finance separates the current month from closed and historical c
   assert.match(browser, /if \(period === "previous-month"\)/);
   assert.match(browser, /if \(period === "current-quarter"\)/);
   assert.match(browser, /if \(period === "previous-quarter"\)/);
-  assert.match(browser, /if \(startDate && startDate > asOf\) return "Scheduled"/);
+  assert.match(browser, /if \(!isContractBillingEnabled\(placement, asOf\) \|\| startDate > asOf\) return "Scheduled"/);
   assert.match(browser, /if \(!shared\.startDate \|\| shared\.startDate > now\) return \[\]/);
   assert.match(browser, /Projected Period Close/);
   assert.match(browser, /Month-End Forecast Revenue/);
@@ -179,6 +181,19 @@ test("contractual finance prorates monthly rates by actual worked weekdays witho
   assert.match(browser, /No holiday calendar is maintained/);
   assert.match(browser, /Actual C2C workdays saved/);
   assert.match(authorization, /actualWorkedDaysByMonth/);
+});
+
+test("contractual finance only accrues after billing is activated and retains closed-contract history", async () => {
+  const browser = await readFile(path.join(root, "app.js"), "utf8");
+
+  assert.match(browser, /function getPlacementBillingStatusValue/);
+  assert.match(browser, /function isContractBillingEnabled/);
+  assert.match(browser, /savedStatus === "Not Started"/);
+  assert.match(browser, /billingEnabled, isOnboarded: candidate\?\.stage === "Onboarded"/);
+  assert.match(browser, /if \(!shared\.isOnboarded \|\| \(engagementType === "Contractual" && !shared\.billingEnabled\)\) return \[\]/);
+  assert.match(browser, /Only Active Onboarded C2C placements are included in calculated totals/);
+  assert.match(browser, /Scheduled Onboarding/);
+  assert.match(browser, /if \(endDate && endDate < asOf\) return "Contract Closed"/);
 });
 
 test("executive finance projects the current C2C month from the recorded billable-day run rate", async () => {
@@ -220,17 +235,14 @@ test("executive finance leads with projected month, quarter, and FY close totals
   assert.match(browser, /Expected cost/);
 });
 
-test("executive finance gives an end-of-month delivery cost and salary cash forecast", async () => {
+test("executive finance omits salary cash planning and states the April–March financial year", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
-  assert.match(browser, /function getMonthEndDeliveryCostForecast/);
-  assert.match(browser, /Cash Required by Month End/);
-  assert.match(browser, /Delivery Cost Forecast/);
-  assert.match(browser, /data-action="delivery-cost-view"/);
-  assert.match(browser, /Overall \+ candidate detail/);
-  assert.match(browser, /C2C is forecast at each candidate’s current billable-day pace/);
-  assert.match(browser, /FTE cost appears only in its one-time recognition month/);
-  assert.match(browser, /\$\{renderDeliveryCostCashForecast\(finance\)\}/);
+  assert.doesNotMatch(browser, /function getMonthEndDeliveryCostForecast/);
+  assert.doesNotMatch(browser, /renderDeliveryCostCashForecast/);
+  assert.doesNotMatch(browser, /Salary cash planning/);
+  assert.match(browser, /financialYearStart = date\.month >= 4 \? date\.year : date\.year - 1/);
+  assert.match(browser, /The financial year runs 1 April to 31 March; January–March is Q4/);
 });
 
 test("revenue charts present the most recent month and quarter first", async () => {
