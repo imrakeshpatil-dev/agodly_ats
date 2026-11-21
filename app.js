@@ -3885,100 +3885,46 @@ function renderOnboardedRevenueTracker() {
           ? `<p class="finance-data-warning">Client assignment required for ${missingClientAssignments.length} deployed candidate${missingClientAssignments.length === 1 ? "" : "s"}. Their revenue will remain flagged until a client is saved.</p>`
           : ""
       }
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Candidate</th>
-              <th>TA</th>
-              <th>Job</th>
-              <th>Client</th>
-              <th>Type</th>
-              <th>Planned Start</th>
-              <th>Billing Status</th>
-              <th>Billable Start</th>
-              <th>Contract End / Closure</th>
-              <th>Monthly Bill / FTE Fee</th>
-              <th>Monthly Cost / FTE Cost</th>
-              <th>Margin</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map((row) => {
-                      // This tracker is already restricted to CEO/MD. Do not apply
-                      // recruiter ownership here: executives need to correct finance
-                      // for every deployed candidate, including another TA's rows.
-                      const editable = canCurrentUserAccessExecutiveFinance();
-                      const draftValue = (field, savedValue = "") => getFinanceEditDraftValue(row.candidateId, field, savedValue);
-                      const clientId = draftValue("clientId", row.clientId);
-                      const projectStartDate = draftValue("projectStartDate", row.projectStartDate || "");
-                      const billingStatus = draftValue("billingStatus", row.billingStatus || "Not Started");
-                      const billableStartDate = draftValue("billableStartDate", row.billableStartDate || projectStartDate || "");
-                      const projectEndDate = draftValue("projectEndDate", row.projectEndDate || "");
-                      const recognitionDate = draftValue("recognitionDate", row.recognitionDate || row.date || "");
-                      const revenue = draftValue("revenue", String(Number(row.revenue || 0)));
-                      const cost = draftValue("cost", String(Number(row.cost || 0)));
-                      return `
-                        <tr>
-                          <td><strong>${escapeHtml(row.candidateName)}</strong></td>
-                          <td>${escapeHtml(row.recruiter)}</td>
-                          <td>${escapeHtml(row.jobTitle)}</td>
-                          <td>
-                            <select class="tracker-input tracker-client-select" data-finance-field="clientId" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}>
-                              <option value="">Assign client *</option>
-                              ${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}
-                            </select>
-                          </td>
-                          <td><span class="badge ${row.engagementType === "Contractual" ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><br /><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectStartDate))}" ${editable ? "" : "disabled"} />` : `<input class="tracker-input" type="date" data-finance-field="recognitionDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(recognitionDate))}" ${editable ? "" : "disabled"} />`}</td>
-                          <td>${row.engagementType === "Contractual" ? `<select class="tracker-input" data-finance-field="billingStatus" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}><option value="Not Started" ${billingStatus === "Not Started" ? "selected" : ""}>Not started</option><option value="Active" ${billingStatus === "Active" ? "selected" : ""}>Active</option></select>` : "One-time placement"}</td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="billableStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(billableStartDate))}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
-                          <td>${row.engagementType === "Contractual" ? `<input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectEndDate))}" ${editable ? "" : "disabled"} />` : "One-time placement"}</td>
-                          <td>
-                            <input
-                              class="tracker-input"
-                              type="number"
-                              min="0"
-                              data-finance-field="revenue"
-                              data-candidate-id="${escapeHtml(row.candidateId)}"
-                              value="${escapeHtml(String(revenue))}"
-                              ${editable ? "" : "disabled"}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              class="tracker-input"
-                              type="number"
-                              min="0"
-                              data-finance-field="cost"
-                              data-candidate-id="${escapeHtml(row.candidateId)}"
-                              value="${escapeHtml(String(cost))}"
-                              ${editable ? "" : "disabled"}
-                            />
-                          </td>
-                          <td>
-                            <strong>${formatCurrency(row.margin)}</strong><br />
-                            <span class="muted-cell">${formatPercent(row.marginPercent)} margin</span>
-                          </td>
-                          <td>
-                            <button class="tool-btn" type="button" data-action="save-placement-finance" data-candidate-id="${escapeHtml(row.candidateId)}" ${
-                              editable ? "" : "disabled"
-                            }>
-                              Save Finance
-                            </button>
-                          </td>
-                        </tr>
-                      `;
-                    })
-                    .join("")
-                : `<tr><td colspan="13" class="empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</td></tr>`
-            }
-          </tbody>
-        </table>
+      <div class="finance-editor-list">
+        ${
+          rows.length
+            ? rows
+                .map((row) => {
+                  // This tracker is already restricted to CEO/MD. Do not apply
+                  // recruiter ownership here: executives need to correct finance
+                  // for every deployed candidate, including another TA's rows.
+                  const editable = canCurrentUserAccessExecutiveFinance();
+                  const draftValue = (field, savedValue = "") => getFinanceEditDraftValue(row.candidateId, field, savedValue);
+                  const clientId = draftValue("clientId", row.clientId);
+                  const projectStartDate = draftValue("projectStartDate", row.projectStartDate || "");
+                  const billingStatus = draftValue("billingStatus", row.billingStatus || "Not Started");
+                  const billableStartDate = draftValue("billableStartDate", row.billableStartDate || projectStartDate || "");
+                  const projectEndDate = draftValue("projectEndDate", row.projectEndDate || "");
+                  const recognitionDate = draftValue("recognitionDate", row.recognitionDate || row.date || "");
+                  const revenue = draftValue("revenue", String(Number(row.revenue || 0)));
+                  const cost = draftValue("cost", String(Number(row.cost || 0)));
+                  const isContractual = row.engagementType === "Contractual";
+                  return `
+                    <article class="finance-editor-card">
+                      <div class="finance-editor-card-head">
+                        <div class="finance-editor-person"><strong>${escapeHtml(row.candidateName)}</strong><span>${escapeHtml(row.jobTitle)}</span><span>TA · ${escapeHtml(row.recruiter)}</span></div>
+                        <div class="finance-editor-status"><span class="badge ${isContractual ? "yellow" : "green"}">${escapeHtml(row.engagementType)}</span><span class="muted-cell">${escapeHtml(row.contractStatus)}</span></div>
+                      </div>
+                      <div class="finance-editor-fields">
+                        <label><span>Client</span><select class="tracker-input tracker-client-select" data-finance-field="clientId" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}><option value="">Assign client *</option>${state.clients.map((client) => `<option value="${escapeHtml(client.id)}" ${clientId === client.id ? "selected" : ""}>${escapeHtml(client.name)}</option>`).join("")}</select></label>
+                        <label><span>${isContractual ? "Planned start" : "Recognition date"}</span><input class="tracker-input" type="date" data-finance-field="${isContractual ? "projectStartDate" : "recognitionDate"}" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(isContractual ? projectStartDate : recognitionDate))}" ${editable ? "" : "disabled"} /></label>
+                        ${isContractual ? `<label><span>Billing status</span><select class="tracker-input" data-finance-field="billingStatus" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}><option value="Not Started" ${billingStatus === "Not Started" ? "selected" : ""}>Not started</option><option value="Active" ${billingStatus === "Active" ? "selected" : ""}>Active</option></select></label><label><span>Billable start</span><input class="tracker-input" type="date" data-finance-field="billableStartDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(billableStartDate))}" ${editable ? "" : "disabled"} /></label><label><span>Contract end</span><input class="tracker-input" type="date" data-finance-field="projectEndDate" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(projectEndDate))}" ${editable ? "" : "disabled"} /></label>` : ""}
+                        <label><span>${isContractual ? "Monthly bill" : "FTE fee"}</span><input class="tracker-input" type="number" min="0" data-finance-field="revenue" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(revenue))}" ${editable ? "" : "disabled"} /></label>
+                        <label><span>${isContractual ? "Monthly cost" : "FTE cost"}</span><input class="tracker-input" type="number" min="0" data-finance-field="cost" data-candidate-id="${escapeHtml(row.candidateId)}" value="${escapeHtml(String(cost))}" ${editable ? "" : "disabled"} /></label>
+                        <div class="finance-editor-margin"><span>Margin</span><strong>${formatCurrency(row.margin)}</strong><small>${formatPercent(row.marginPercent)} margin</small></div>
+                      </div>
+                      <div class="finance-editor-actions"><button class="tool-btn" type="button" data-action="save-placement-finance" data-candidate-id="${escapeHtml(row.candidateId)}" ${editable ? "" : "disabled"}>Save finance</button></div>
+                    </article>
+                  `;
+                })
+                .join("")
+            : `<div class="empty finance-editor-empty">No onboarded candidates yet. Move candidates to Onboarded to track revenue and margin.</div>`
+        }
       </div>
       ${
         contractualRows.length

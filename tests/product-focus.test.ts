@@ -47,7 +47,7 @@ test("the browser shell uses verified external parsing libraries and strict secu
 test("contractual onboarding retains project dates and rolls actual finance up by TA", async () => {
   const browser = await readFile(path.join(root, "app.js"), "utf8");
 
-  assert.match(browser, /data-finance-field="projectStartDate"/);
+  assert.match(browser, /isContractual \? "projectStartDate" : "recognitionDate"/);
   assert.match(browser, /data-finance-field="billingStatus"/);
   assert.match(browser, /data-finance-field="billableStartDate"/);
   assert.match(browser, /data-finance-field="projectEndDate"/);
@@ -74,6 +74,21 @@ test("finance edits are explicit and survive a background state refresh until sa
   assert.match(browser, /setFinanceEditDraftValue\(event\.target\.dataset\.candidateId, event\.target\.dataset\.financeField, event\.target\.value\)/);
   assert.match(browser, /hasFinanceEditDrafts\(\)/);
   assert.match(browser, /clearFinanceEditDraft\(candidate\.id\)/);
+});
+
+test("onboarded finance uses readable grouped editor cards instead of a compressed table", async () => {
+  const [browser, styles] = await Promise.all([
+    readFile(path.join(root, "app.js"), "utf8"),
+    readFile(path.join(root, "styles.css"), "utf8")
+  ]);
+
+  assert.match(browser, /class="finance-editor-list"/);
+  assert.match(browser, /class="finance-editor-card"/);
+  assert.match(browser, /class="finance-editor-fields"/);
+  assert.match(browser, /class="finance-editor-margin"/);
+  assert.match(browser, /Save finance/);
+  assert.match(styles, /\.finance-editor-fields \{/);
+  assert.match(styles, /grid-template-columns: repeat\(auto-fit, minmax\(145px, 1fr\)\)/);
 });
 
 test("deleted candidates cannot contribute to revenue, and permanent erasure removes their linked data", async () => {

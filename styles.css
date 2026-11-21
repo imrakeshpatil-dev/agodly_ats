@@ -819,6 +819,110 @@ select {
   cursor: not-allowed;
 }
 
+.finance-editor-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.finance-editor-card {
+  border: 1px solid rgba(67, 111, 157, 0.56);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(16, 37, 62, 0.96), rgba(10, 26, 45, 0.96));
+  overflow: hidden;
+}
+
+.finance-editor-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.78rem 0.86rem;
+  border-bottom: 1px solid rgba(67, 111, 157, 0.42);
+}
+
+.finance-editor-person,
+.finance-editor-status,
+.finance-editor-fields label,
+.finance-editor-margin {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.finance-editor-person strong {
+  color: #f1f6ff;
+  font-size: 0.95rem;
+}
+
+.finance-editor-person span,
+.finance-editor-status .muted-cell {
+  color: #9eb5d2;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.finance-editor-status {
+  justify-items: end;
+  text-align: right;
+  min-width: max-content;
+}
+
+.finance-editor-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.68rem;
+  padding: 0.78rem 0.86rem;
+}
+
+.finance-editor-fields label > span,
+.finance-editor-margin > span {
+  color: #9eb5d2;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.finance-editor-fields .tracker-input {
+  width: 100%;
+  min-height: 2.42rem;
+}
+
+.finance-editor-margin {
+  align-content: center;
+  min-height: 2.42rem;
+  padding: 0.42rem 0.58rem;
+  border: 1px solid rgba(82, 190, 160, 0.38);
+  border-radius: 9px;
+  background: rgba(30, 129, 113, 0.1);
+}
+
+.finance-editor-margin strong {
+  color: #eafcff;
+  font-size: 0.92rem;
+}
+
+.finance-editor-margin small {
+  color: #9eb5d2;
+  font-size: 0.74rem;
+}
+
+.finance-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0.86rem 0.82rem;
+}
+
+.finance-editor-actions .tool-btn {
+  min-width: 132px;
+}
+
+.finance-editor-empty {
+  padding: 2.25rem 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  text-align: center;
+}
+
 .contract-finance-summary {
   margin-top: 1rem;
   padding-top: 1rem;
@@ -902,6 +1006,24 @@ select {
 @media (max-width: 700px) {
   .finance-filters {
     grid-template-columns: 1fr;
+  }
+
+  .finance-editor-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .finance-editor-status {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .finance-editor-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-editor-actions .tool-btn {
+    width: 100%;
   }
 }
 
